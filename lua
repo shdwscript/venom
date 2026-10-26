@@ -1,27 +1,49 @@
--- master venom: racket rivals — Raw Custom UI (Speed Hook & Key Spam)
--- runtime: Real executor
+-- master venom: racket rivals — Rayfield Premium Hub
+-- runtime: Real executor (Solara, Wave, Velocity, Xeno)
 -- game: Racket Rivals
+-- features: Auto Swing, Ball Magnet, Aimbot, Hitbox, Dash/Set Spam, Auto Ability, ESP
+
+local success, Rayfield = pcall(function()
+    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
+if not success or not Rayfield then return end
+
+local Window = Rayfield:CreateWindow({
+    Name = "master venom | racket rivals",
+    LoadingTitle = "master venom",
+    LoadingSubtitle = "loading premium hub...",
+    Theme = "Dark",
+    AccentColor = Color3.fromRGB(255, 50, 50),
+    ConfigurationSaving = {Enabled = false},
+    Discord = {Enabled = false},
+    KeySystem = false,
+})
+
+task.wait(0.5)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
+local VirtualUser = game:GetService("VirtualUser")
 local LocalPlayer = Players.LocalPlayer
 
 local state = {
     autoSwing = false,
     autoAim = false,
     magnet = false,
-    speedEnabled = false,
-    speedValue = 30,
-    jumpEnabled = false,
-    jumpValue = 100,
+    magnetStrength = 0.15,
+    hitboxExpander = false,
+    hitboxSize = 10,
     dashSpam = false,
     setSpam = false,
+    autoAbility = false,
+    espEnabled = false,
+    ballTracer = false,
 }
 
 -- ============================================================
--- GAME LOGIC
+-- GAME LOGIC & HELPERS
 -- ============================================================
 local function getBallShadow()
     local fx = Workspace:FindFirstChild("FX")
@@ -44,7 +66,25 @@ local function getBall()
     return nil
 end
 
--- Auto Swing
+local function pressKey(keyCode, holdTime)
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:KeyDown(keyCode)
+        task.wait(holdTime or 0.05)
+        VirtualUser:KeyUp(keyCode)
+    end)
+end
+
+local function clickMouse()
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton1(Vector2.new(0, 0))
+    end)
+end
+
+-- ============================================================
+-- AUTO SWING (Ball + Shadow Proximity)
+-- ============================================================
 task.spawn(function()
     while task.wait(0.1) do
         if state.autoSwing then
@@ -55,53 +95,33 @@ task.spawn(function()
             
             if root and (shadow or ball) then
                 local targetPos = shadow and shadow.Position or ball.Position
-                if (root.Position - targetPos).Magnitude < 25 then
-                    pcall(function()
-                        keypress(0x46) -- F key
-                        task.wait(0.05)
-                        keyrelease(0x46)
-                        mouse1click()
-                    end)
+                if (root.Position - targetPos).Magnitude < 30 then
+                    clickMouse()
+                    pressKey(Enum.KeyCode.F)
                 end
             end
         end
     end
 end)
 
--- Dash (Q) & Set (E) Spam
-task.spawn(function()
-    while task.wait(0.1) do
-        if state.dashSpam then
-            pcall(function()
-                keypress(0x51) -- Q key
-                task.wait(0.05)
-                keyrelease(0x51)
-            end)
-        end
-        if state.setSpam then
-            pcall(function()
-                keypress(0x45) -- E key
-                task.wait(0.05)
-                keyrelease(0x45)
-            end)
-        end
-    end
-end)
-
--- Ball Magnet
+-- ============================================================
+-- BALL MAGNET (CFrame Lerp to Shadow)
+-- ============================================================
 RunService.Heartbeat:Connect(function()
     if state.magnet then
         local shadow = getBallShadow()
         local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
         local root = char and char:FindFirstChild("HumanoidRootPart")
-        if shadow and hum and root then
-            hum:MoveTo(shadow.Position)
+        if shadow and root then
+            local targetPos = Vector3.new(shadow.Position.X, root.Position.Y, shadow.Position.Z)
+            root.CFrame = CFrame.new(root.Position:Lerp(targetPos, state.magnetStrength), root.CFrame.LookVector)
         end
     end
 end)
 
--- Camera Auto Aim
+-- ============================================================
+-- CAMERA AIMBOT (Locks to Ball)
+-- ============================================================
 local oldNameIndex
 oldNameIndex = hookmetamethod(game, "__newindex", function(self, key, value)
     if self == Workspace.CurrentCamera and key == "CFrame" then
@@ -115,260 +135,159 @@ oldNameIndex = hookmetamethod(game, "__newindex", function(self, key, value)
     return oldNameIndex(self, key, value)
 end)
 
--- SPEED & JUMP HOOK (Bypasses Game Override)
-local mt = getrawmetatable(game)
-local oldIndex = mt.__newindex
-setreadonly(mt, false)
-
-mt.__newindex = newcclosure(function(self, key, value)
-    if self:IsA("Humanoid") then
-        if key == "WalkSpeed" and state.speedEnabled then
-            return oldIndex(self, key, state.speedValue)
-        elseif key == "JumpPower" and state.jumpEnabled then
-            return oldIndex(self, key, state.jumpValue)
-        end
+-- ============================================================
+-- DASH & SET SPAM
+-- ============================================================
+task.spawn(function()
+    while task.wait(0.15) do
+        if state.dashSpam then pressKey(Enum.KeyCode.Q) end
+        if state.setSpam then pressKey(Enum.KeyCode.E) end
     end
-    return oldIndex(self, key, value)
 end)
 
-setreadonly(mt, true)
+-- ============================================================
+-- AUTO ABILITY
+-- ============================================================
+task.spawn(function()
+    while task.wait(0.5) do
+        if state.autoAbility then pressKey(Enum.KeyCode.One) end
+    end
+end)
 
--- Force Initial Value on Loop
-RunService.Heartbeat:Connect(function()
-    local char = LocalPlayer.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        if state.speedEnabled and hum.WalkSpeed ~= state.speedValue then
-            hum.WalkSpeed = state.speedValue
-        elseif state.jumpEnabled and hum.JumpPower ~= state.jumpValue then
-            hum.JumpPower = state.jumpValue
+-- ============================================================
+-- HITBOX EXPANDER (Custom Racket Model)
+-- ============================================================
+task.spawn(function()
+    while task.wait(0.5) do
+        if state.hitboxExpander then
+            local char = LocalPlayer.Character
+            if char then
+                local racket = char:FindFirstChild("Racket") or char:FindFirstChild("RacketModel")
+                if racket and racket:IsA("Model") then
+                    local handle = racket:FindFirstChild("Handle") or racket.PrimaryPart
+                    if handle then
+                        handle.Size = Vector3.new(state.hitboxSize, state.hitboxSize, state.hitboxSize)
+                        handle.Transparency = 0.5
+                    end
+                end
+            end
         end
     end
 end)
 
 -- ============================================================
--- CUSTOM UI BUILDER (RAW INSTANCES)
+-- ESP & BALL TRACER
 -- ============================================================
-local CoreGui = game:GetService("CoreGui")
-local Gui = Instance.new("ScreenGui")
-Gui.Name = "MasterVenomUI"
-Gui.ResetOnSpawn = false
-Gui.Parent = CoreGui
+local espCache = {}
+local ballTracer = Drawing.new("Line")
+ballTracer.Thickness = 2
+ballTracer.Color = Color3.fromRGB(255, 50, 50)
+ballTracer.Visible = false
 
-local Main = Instance.new("Frame")
-Main.Size = UDim2.new(0, 500, 0, 450) -- Increased height for new toggles
-Main.Position = UDim2.new(0.5, -250, 0.5, -225)
-Main.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-Main.BorderSizePixel = 0
-Main.Parent = Gui
-
-local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(0, 8)
-UICorner.Parent = Main
-
-local Stroke = Instance.new("UIStroke")
-Stroke.Color = Color3.fromRGB(255, 50, 50)
-Stroke.Thickness = 2
-Stroke.Parent = Main
-
--- Top Bar (Draggable)
-local TopBar = Instance.new("Frame")
-TopBar.Size = UDim2.new(1, 0, 0, 35)
-TopBar.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-TopBar.BorderSizePixel = 0
-TopBar.Parent = Main
-
-local TopCorner = Instance.new("UICorner")
-TopCorner.CornerRadius = UDim.new(0, 8)
-TopCorner.Parent = TopBar
-
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -20, 1, 0)
-Title.Position = UDim2.new(0, 10, 0, 0)
-Title.BackgroundTransparency = 1
-Title.Text = "master venom | racket rivals"
-Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 14
-Title.Parent = TopBar
-
--- Drag Logic
-local dragging, dragInput, dragStart, startPos
-TopBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPos = Main.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then dragging = false end
-        end)
+local function clearESP()
+    for _, drawing in pairs(espCache) do
+        if drawing and drawing.Remove then drawing:Remove() end
     end
-end)
-TopBar.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        local delta = input.Position - dragStart
-        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-
--- Content Area
-local Content = Instance.new("Frame")
-Content.Size = UDim2.new(1, -20, 1, -45)
-Content.Position = UDim2.new(0, 10, 0, 45)
-Content.BackgroundTransparency = 1
-Content.Parent = Main
-
--- UI Helper Functions
-local yOffset = 0
-
-local function CreateSection(text)
-    local section = Instance.new("TextLabel")
-    section.Size = UDim2.new(1, 0, 0, 20)
-    section.Position = UDim2.new(0, 0, 0, yOffset)
-    section.BackgroundTransparency = 1
-    section.Text = string.upper(text)
-    section.TextColor3 = Color3.fromRGB(255, 50, 50)
-    section.TextXAlignment = Enum.TextXAlignment.Left
-    section.Font = Enum.Font.GothamBold
-    section.TextSize = 12
-    section.Parent = Content
-    yOffset = yOffset + 25
+    espCache = {}
 end
 
-local function CreateToggle(name, default, callback)
-    local toggleFrame = Instance.new("Frame")
-    toggleFrame.Size = UDim2.new(1, 0, 0, 30)
-    toggleFrame.Position = UDim2.new(0, 0, 0, yOffset)
-    toggleFrame.BackgroundTransparency = 1
-    toggleFrame.Parent = Content
+RunService.RenderStepped:Connect(function()
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
 
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -50, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    label.TextColor3 = Color3.fromRGB(200, 200, 200)
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 13
-    label.Parent = toggleFrame
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 40, 0, 20)
-    btn.Position = UDim2.new(1, -40, 0.5, -10)
-    btn.BackgroundColor3 = default and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(50, 50, 50)
-    btn.BorderSizePixel = 0
-    btn.Text = ""
-    btn.Parent = toggleFrame
-
-    local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 4)
-    btnCorner.Parent = btn
-
-    local indicator = Instance.new("Frame")
-    indicator.Size = UDim2.new(0, 16, 0, 16)
-    indicator.Position = default and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
-    indicator.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    indicator.BorderSizePixel = 0
-    indicator.Parent = btn
-
-    local indCorner = Instance.new("UICorner")
-    indCorner.CornerRadius = UDim.new(0, 4)
-    indCorner.Parent = indicator
-
-    local toggled = default
-    btn.MouseButton1Click:Connect(function()
-        toggled = not toggled
-        btn.BackgroundColor3 = toggled and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(50, 50, 50)
-        indicator.Position = toggled and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
-        callback(toggled)
-    end)
-
-    yOffset = yOffset + 35
-end
-
-local function CreateSlider(name, min, max, default, callback)
-    local sliderFrame = Instance.new("Frame")
-    sliderFrame.Size = UDim2.new(1, 0, 0, 45)
-    sliderFrame.Position = UDim2.new(0, 0, 0, yOffset)
-    sliderFrame.BackgroundTransparency = 1
-    sliderFrame.Parent = Content
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, 0, 0, 20)
-    label.BackgroundTransparency = 1
-    label.Text = name .. ": " .. tostring(default)
-    label.TextColor3 = Color3.fromRGB(200, 200, 200)
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 13
-    label.Parent = sliderFrame
-
-    local bar = Instance.new("Frame")
-    bar.Size = UDim2.new(1, 0, 0, 6)
-    bar.Position = UDim2.new(0, 0, 0, 25)
-    bar.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    bar.BorderSizePixel = 0
-    bar.Parent = sliderFrame
-
-    local fill = Instance.new("Frame")
-    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
-    fill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-    fill.BorderSizePixel = 0
-    fill.Parent = bar
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 1, 0)
-    btn.BackgroundTransparency = 1
-    btn.Text = ""
-    btn.Parent = bar
-
-    local sliding = false
-    local function update(input)
-        local pos = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
-        local val = math.floor(min + (max - min) * pos)
-        fill.Size = UDim2.new(pos, 0, 1, 0)
-        label.Text = name .. ": " .. tostring(val)
-        callback(val)
+    -- Ball Tracer
+    if state.ballTracer then
+        local ball = getBall()
+        if ball then
+            local screenPos, onScreen = cam:WorldToViewportPoint(ball.Position)
+            if onScreen then
+                ballTracer.From = Vector2.new(cam.ViewportSize.X / 2, cam.ViewportSize.Y)
+                ballTracer.To = Vector2.new(screenPos.X, screenPos.Y)
+                ballTracer.Visible = true
+            else
+                ballTracer.Visible = false
+            end
+        else
+            ballTracer.Visible = false
+        end
+    else
+        ballTracer.Visible = false
     end
 
-    btn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            sliding = true
-            update(input)
+    -- Player ESP
+    if state.espEnabled then
+        local seen = {}
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local head = plr.Character:FindFirstChild("Head")
+                local root = plr.Character:FindFirstChild("HumanoidRootPart")
+                if head and root then
+                    seen[plr] = true
+                    if not espCache[plr] then
+                        espCache[plr] = {
+                            name = Drawing.new("Text"),
+                            box = Drawing.new("Square"),
+                        }
+                        espCache[plr].name.Size = 14
+                        espCache[plr].name.Center = true
+                        espCache[plr].name.Outline = true
+                        espCache[plr].box.Thickness = 1
+                        espCache[plr].box.Filled = false
+                    end
+
+                    local screenHead, onHead = cam:WorldToViewportPoint(head.Position)
+                    local screenRoot, onRoot = cam:WorldToViewportPoint(root.Position)
+
+                    if onHead and onRoot then
+                        local height = math.abs(screenHead.Y - screenRoot.Y)
+                        local width = height * 0.5
+                        espCache[plr].name.Position = Vector2.new(screenHead.X, screenHead.Y - 20)
+                        espCache[plr].name.Text = plr.Name
+                        espCache[plr].name.Color = Color3.new(1, 1, 1)
+                        espCache[plr].name.Visible = true
+                        espCache[plr].box.Position = Vector2.new(screenHead.X - width / 2, screenHead.Y)
+                        espCache[plr].box.Size = Vector2.new(width, height)
+                        espCache[plr].box.Color = Color3.new(1, 1, 1)
+                        espCache[plr].box.Visible = true
+                    else
+                        espCache[plr].name.Visible = false
+                        espCache[plr].box.Visible = false
+                    end
+                end
+            end
         end
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if sliding and input.UserInputType == Enum.UserInputType.MouseMovement then
-            update(input)
+        for plr, drawings in pairs(espCache) do
+            if not seen[plr] then
+                drawings.name.Visible = false
+                drawings.box.Visible = false
+            end
         end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then sliding = false end
-    end)
-
-    yOffset = yOffset + 55
-end
+    end
+end)
 
 -- ============================================================
--- BUILD THE MENU
+-- UI CONSTRUCTION (RAYFIELD)
 -- ============================================================
-CreateSection("Combat")
-CreateToggle("Auto Swing", false, function(v) state.autoSwing = v end)
-CreateToggle("Camera Auto Aim", false, function(v) state.autoAim = v end)
-CreateToggle("Ball Magnet", false, function(v) state.magnet = v end)
+local CombatTab = Window:CreateTab("Combat", nil)
+local VisualsTab = Window:CreateTab("Visuals", nil)
 
-CreateSection("Mechanics")
-CreateToggle("Dash Spam (Q)", false, function(v) state.dashSpam = v end)
-CreateToggle("Set Spam (E)", false, function(v) state.setSpam = v end)
+CombatTab:CreateSection("Automation")
+CombatTab:CreateToggle({ Name = "Auto Swing", CurrentValue = false, Flag = "AutoSwing", Callback = function(v) state.autoSwing = v end })
+CombatTab:CreateToggle({ Name = "Camera Aimbot", CurrentValue = false, Flag = "AutoAim", Callback = function(v) state.autoAim = v end })
+CombatTab:CreateToggle({ Name = "Ball Magnet", CurrentValue = false, Flag = "Magnet", Callback = function(v) state.magnet = v end })
+CombatTab:CreateSlider({ Name = "Magnet Strength", Range = {0.05, 0.5}, Increment = 0.01, CurrentValue = 0.15, Suffix = "lerp", Flag = "MagnetStr", Callback = function(v) state.magnetStrength = v end })
 
-CreateSection("Movement")
-CreateToggle("Speed Enabled (Force)", false, function(v) state.speedEnabled = v end)
-CreateSlider("Walk Speed", 16, 150, 45, function(v) state.speedValue = v end)
-CreateToggle("Jump Enabled (Force)", false, function(v) state.jumpEnabled = v end)
-CreateSlider("Jump Power", 50, 300, 120, function(v) state.jumpValue = v end)
+CombatTab:CreateSection("Mechanics")
+CombatTab:CreateToggle({ Name = "Dash Spam (Q)", CurrentValue = false, Flag = "DashSpam", Callback = function(v) state.dashSpam = v end })
+CombatTab:CreateToggle({ Name = "Set Spam (E)", CurrentValue = false, Flag = "SetSpam", Callback = function(v) state.setSpam = v end })
+CombatTab:CreateToggle({ Name = "Auto Ability (1)", CurrentValue = false, Flag = "AutoAbility", Callback = function(v) state.autoAbility = v end })
+
+CombatTab:CreateSection("Hitbox")
+CombatTab:CreateToggle({ Name = "Expand Hitbox", CurrentValue = false, Flag = "Hitbox", Callback = function(v) state.hitboxExpander = v end })
+CombatTab:CreateSlider({ Name = "Hitbox Size", Range = {5, 30}, Increment = 1, CurrentValue = 10, Suffix = "studs", Flag = "HitboxSize", Callback = function(v) state.hitboxSize = v end })
+
+VisualsTab:CreateSection("ESP")
+VisualsTab:CreateToggle({ Name = "Player ESP", CurrentValue = false, Flag = "ESP", Callback = function(v) state.espEnabled = v end })
+VisualsTab:CreateToggle({ Name = "Ball Tracer", CurrentValue = false, Flag = "BallTracer", Callback = function(v) state.ballTracer = v end })
+
+Rayfield:Notify({ Title = "master venom online", Content = "Racket Rivals premium hub loaded", Duration = 5 })
