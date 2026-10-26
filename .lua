@@ -1,5 +1,5 @@
--- master venom: steal an egg — tween glide & prompt bypass
--- runtime: Roblox executor (supports fireproximityprompt & getconnections)
+-- master venom: steal an egg — ultimate bypass (manual CFrame glide)
+-- runtime: Roblox executor
 
 local success, Rayfield = pcall(function()
     return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
@@ -10,7 +10,7 @@ if not success or not Rayfield then return end
 local Window = Rayfield:CreateWindow({
     Name = "master venom: steal an egg",
     LoadingTitle = "master venom",
-    LoadingSubtitle = "tween glide bypass...",
+    LoadingSubtitle = "initializing bypass...",
     ConfigurationSaving = {Enabled = false},
     Discord = {Enabled = false},
     KeySystem = false,
@@ -19,7 +19,8 @@ local Window = Rayfield:CreateWindow({
 task.wait(0.5)
 
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
@@ -28,15 +29,36 @@ local state = {
     autoHatch = false,
     autoPlace = false,
     espEnabled = false,
+    speedEnabled = false,
+    speedValue = 16,
 }
 
+local remotes = {}
+
 -- ============================================================
--- TARGETING
+-- REMOTE SCANNER (For Hatch & Place)
+-- ============================================================
+local function scanRemotes()
+    remotes = {}
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            local n = string.lower(obj.Name)
+            if string.find(n, "hatch") then
+                remotes.hatch = remotes.hatch or obj
+            elseif string.find(n, "place") then
+                remotes.place = remotes.place or obj
+            end
+        end
+    end
+end
+scanRemotes()
+
+-- ============================================================
+-- TARGETING (Deep Scan)
 -- ============================================================
 local function getEggs()
     local list = {}
-    local map = Workspace:FindFirstChild("Map") or Workspace:FindFirstChild("Eggs") or Workspace
-    for _, obj in ipairs(map:GetDescendants()) do
+    for _, obj in ipairs(Workspace:GetDescendants()) do
         if (obj:IsA("Model") or obj:IsA("Part")) and string.find(string.lower(obj.Name), "egg") then
             table.insert(list, obj)
         end
@@ -88,25 +110,44 @@ local function fireEggPrompts(egg)
 end
 
 -- ============================================================
--- SMOOTH TWEEN GLIDE
+-- MANUAL CFrame GLIDE (Smooth & Bypasses Physics)
 -- ============================================================
-local function tweenGlide(targetPos, speed)
+local function manualGlide(targetPos)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    local distance = (targetPos - hrp.Position).Magnitude
-    local time = distance / speed
+    local speed = 120 -- studs per second
+    local originalCanCollide = hrp.CanCollide
+    hrp.CanCollide = false
 
-    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
-    local goal = {CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))}
+    local distance = (targetPos - hrp.Position).Magnitude
+    local timeToTravel = distance / speed
+    local elapsed = 0
+
+    local connection
+    connection = RunService.Heartbeat:Connect(function(dt)
+        if not hrp or not hrp.Parent then
+            connection:Disconnect()
+            return
+        end
+        
+        elapsed = elapsed + dt
+        local alpha = math.clamp(elapsed / timeToTravel, 0, 1)
+        
+        -- Smooth interpolation
+        hrp.CFrame = hrp.CFrame:Lerp(CFrame.new(targetPos + Vector3.new(0, 3, 0)), alpha * 0.5)
+        
+        if alpha >= 1 or (hrp.Position - targetPos).Magnitude < 5 then
+            connection:Disconnect()
+            hrp.CanCollide = originalCanCollide
+        end
+    end)
     
-    local tween = TweenService:Create(hrp, tweenInfo, goal)
-    tween:Play()
-    
-    -- Wait for the tween to finish
-    tween.Completed:Wait()
-    task.wait(0.1)
+    -- Wait until glide finishes
+    task.wait(timeToTravel + 0.1)
+    if connection then connection:Disconnect() end
+    hrp.CanCollide = originalCanCollide
 end
 
 -- ============================================================
@@ -126,47 +167,32 @@ task.spawn(function()
 
         local basePos = hrp.Position
 
-        -- 1. Smooth glide to egg (speed 50)
-        tweenGlide(part.Position, 50)
-        
-        -- 2. Fire prompt
+        -- 1. Glide to egg
+        manualGlide(part.Position)
+        task.wait(0.2)
+
+        -- 2. Fire Prompt
         fireEggPrompts(egg)
         task.wait(0.3)
 
-        -- 3. Smooth glide back to base
-        tweenGlide(basePos, 50)
+        -- 3. Glide back to base
+        manualGlide(basePos)
     end
 end)
 
-local function clickUIButtons(keyword)
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    if not pg then return end
-    for _, obj in ipairs(pg:GetDescendants()) do
-        if obj:IsA("TextButton") or obj:IsA("ImageButton") then
-            local text = obj.Text and string.lower(obj.Text) or ""
-            local name = string.lower(obj.Name)
-            if string.find(text, keyword) or string.find(name, keyword) then
-                if getconnections then
-                    for _, conn in ipairs(getconnections(obj.MouseButton1Click)) do
-                        pcall(function() conn:Fire() end)
-                    end
-                else
-                    pcall(function() obj:Click() end) 
-                end
-            end
-        end
-    end
-end
-
 task.spawn(function()
     while task.wait(2) do
-        if state.autoHatch then clickUIButtons("hatch") end
-        if state.autoPlace then clickUIButtons("place") end
+        if state.autoHatch and remotes.hatch then
+            pcall(function() remotes.hatch:FireServer() end)
+        end
+        if state.autoPlace and remotes.place then
+            pcall(function() remotes.place:FireServer() end)
+        end
     end
 end)
 
 -- ============================================================
--- VISUALS
+-- ESP (Lag-Free Highlighting)
 -- ============================================================
 local espCache = {}
 local function clearESP()
@@ -176,11 +202,21 @@ local function clearESP()
     espCache = {}
 end
 
-local function applyESP()
-    clearESP()
+local function updateESP()
     if not state.espEnabled then return end
-    for _, egg in ipairs(getEggs()) do
-        if egg:IsA("Model") or egg:IsA("Part") then
+    local eggs = getEggs()
+    
+    -- Clean up deleted eggs
+    for egg, hl in pairs(espCache) do
+        if not egg.Parent or not egg:IsDescendantOf(Workspace) then
+            hl:Destroy()
+            espCache[egg] = nil
+        end
+    end
+
+    -- Add missing eggs
+    for _, egg in ipairs(eggs) do
+        if not espCache[egg] and (egg:IsA("Model") or egg:IsA("Part")) then
             local hl = Instance.new("Highlight")
             hl.FillColor = Color3.fromRGB(255, 255, 255)
             hl.OutlineColor = Color3.fromRGB(0, 0, 0)
@@ -190,29 +226,47 @@ local function applyESP()
     end
 end
 
+task.spawn(function()
+    while task.wait(1) do
+        if state.espEnabled then updateESP() end
+    end
+end)
+
+-- ============================================================
+-- SPEED CHANGER
+-- ============================================================
+RunService.Heartbeat:Connect(function()
+    if state.speedEnabled then
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = state.speedValue end
+    end
+end)
+
 -- ============================================================
 -- GUI
 -- ============================================================
 local MainTab = Window:CreateTab("Farm", nil)
 local VisualTab = Window:CreateTab("Visual", nil)
+local MiscTab = Window:CreateTab("Misc", nil)
 
-MainTab:CreateSection("Tween Glide Bypass")
+MainTab:CreateSection("Glide Bypass")
 MainTab:CreateToggle({
-    Name = "Auto Steal (Tween Glide)",
+    Name = "Auto Steal (Glide)",
     CurrentValue = false,
     Flag = "AutoSteal",
     Callback = function(v) state.autoSteal = v end,
 })
 
+MainTab:CreateSection("Remote Automation")
 MainTab:CreateToggle({
-    Name = "Auto Hatch (UI Click)",
+    Name = "Auto Hatch",
     CurrentValue = false,
     Flag = "AutoHatch",
     Callback = function(v) state.autoHatch = v end,
 })
-
 MainTab:CreateToggle({
-    Name = "Auto Place (UI Click)",
+    Name = "Auto Place",
     CurrentValue = false,
     Flag = "AutoPlace",
     Callback = function(v) state.autoPlace = v end,
@@ -225,17 +279,45 @@ VisualTab:CreateToggle({
     Flag = "ESP",
     Callback = function(v)
         state.espEnabled = v
-        applyESP()
+        if not v then clearESP() end
     end,
 })
 
-VisualTab:CreateButton({
-    Name = "Refresh ESP",
-    Callback = function() applyESP() end,
+MiscTab:CreateSection("Movement")
+MiscTab:CreateToggle({
+    Name = "Speed Enabled",
+    CurrentValue = false,
+    Flag = "SpeedEnabled",
+    Callback = function(v)
+        state.speedEnabled = v
+        if not v then
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = 16 end
+        end
+    end,
+})
+
+MiscTab:CreateSlider({
+    Name = "WalkSpeed (Max 100)",
+    Range = {16, 100},
+    Increment = 1,
+    CurrentValue = 16,
+    Suffix = "speed",
+    Flag = "SpeedValue",
+    Callback = function(v) state.speedValue = v end,
+})
+
+MiscTab:CreateButton({
+    Name = "Refresh Remotes",
+    Callback = function()
+        scanRemotes()
+        Rayfield:Notify({Title = "master venom", Content = "remotes rescanned", Duration = 3})
+    end,
 })
 
 Rayfield:Notify({
     Title = "master venom online",
-    Content = "tween glide bypass active",
+    Content = "manual CFrame glide active",
     Duration = 5,
 })
