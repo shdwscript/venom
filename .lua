@@ -1,5 +1,5 @@
--- master venom: steal an egg — ultimate prompt hijack build
--- runtime: Roblox executor with getconnections & fireproximityprompt support
+-- master venom: steal an egg — smooth glide bypass
+-- runtime: Roblox executor (supports fireproximityprompt & getconnections)
 
 local success, Rayfield = pcall(function()
     return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
@@ -10,7 +10,7 @@ if not success or not Rayfield then return end
 local Window = Rayfield:CreateWindow({
     Name = "master venom: steal an egg",
     LoadingTitle = "master venom",
-    LoadingSubtitle = "bypassing validations...",
+    LoadingSubtitle = "initializing glide bypass...",
     ConfigurationSaving = {Enabled = false},
     Discord = {Enabled = false},
     KeySystem = false,
@@ -22,7 +22,6 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
-local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
 local state = {
@@ -30,9 +29,6 @@ local state = {
     autoHatch = false,
     autoPlace = false,
     espEnabled = false,
-    speedEnabled = false,
-    speedValue = 16,
-    infiniteJump = false,
 }
 
 -- ============================================================
@@ -49,11 +45,26 @@ local function getEggs()
     return list
 end
 
-local function getBestEgg()
+-- Finds the closest egg to prevent long glide times
+local function getClosestEgg()
     local eggs = getEggs()
-    if #eggs == 0 then return nil end
-    -- Simple fallback to the first egg found in the workspace
-    return eggs[1]
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp or #eggs == 0 then return nil end
+
+    local closest = nil
+    local minDist = math.huge
+    for _, egg in ipairs(eggs) do
+        local part = egg:IsA("Model") and egg.PrimaryPart or egg
+        if part then
+            local dist = (part.Position - hrp.Position).Magnitude
+            if dist < minDist then
+                minDist = dist
+                closest = egg
+            end
+        end
+    end
+    return closest
 end
 
 local function fireEggPrompts(egg)
@@ -63,7 +74,6 @@ local function fireEggPrompts(egg)
             if fireproximityprompt then
                 pcall(function() fireproximityprompt(prompt) end)
             else
-                -- Fallback for basic executors
                 pcall(function()
                     prompt.HoldDuration = 0
                     prompt:InputHoldBegin()
@@ -78,6 +88,65 @@ local function fireEggPrompts(egg)
         end
     end
 end
+
+-- ============================================================
+-- SMOOTH GLIDE MECHANIC
+-- ============================================================
+local function glideTo(targetPos)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local attachment = Instance.new("Attachment", hrp)
+    local alignPosition = Instance.new("AlignPosition", hrp)
+    
+    alignPosition.Mode = Enum.PositionAlignmentMode.OneAttachment
+    alignPosition.Attachment0 = attachment
+    alignPosition.MaxForce = 50000
+    alignPosition.Responsiveness = 20 -- Adjust for glide smoothness
+    alignPosition.Position = targetPos + Vector3.new(0, 3, 0)
+
+    -- Wait until we are within 6 studs of the target or timeout after 3 seconds
+    local t = 0
+    while t < 3 do
+        if (hrp.Position - (targetPos + Vector3.new(0, 3, 0))).Magnitude < 6 then break end
+        task.wait(0.05)
+        t = t + 0.05
+    end
+
+    alignPosition:Destroy()
+    attachment:Destroy()
+end
+
+-- ============================================================
+-- AUTOMATION LOOPS
+-- ============================================================
+task.spawn(function()
+    while task.wait(1) do
+        if not state.autoSteal then continue end
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then continue end
+
+        local egg = getClosestEgg()
+        if not egg then continue end
+        local part = egg:IsA("Model") and egg.PrimaryPart or egg
+        if not part then continue end
+
+        local basePos = hrp.Position
+
+        -- 1. Glide to egg
+        glideTo(part.Position)
+        task.wait(0.15) -- let the server register our position
+
+        -- 2. Press E
+        fireEggPrompts(egg)
+        task.wait(0.2)
+
+        -- 3. Glide back to base
+        glideTo(basePos)
+    end
+end)
 
 local function clickUIButtons(keyword)
     local pg = LocalPlayer:FindFirstChild("PlayerGui")
@@ -99,29 +168,6 @@ local function clickUIButtons(keyword)
     end
 end
 
--- ============================================================
--- AUTOMATION LOOPS
--- ============================================================
-task.spawn(function()
-    while task.wait(1) do
-        if not state.autoSteal then continue end
-        local target = getBestEgg()
-        if target then
-            -- Teleport to the egg to ensure the prompt fires successfully
-            local part = target:IsA("Model") and target.PrimaryPart or target
-            if part then
-                local char = LocalPlayer.Character
-                local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    hrp.CFrame = part.CFrame + Vector3.new(0, 3, 0)
-                    task.wait(0.1)
-                    fireEggPrompts(target)
-                end
-            end
-        end
-    end
-end)
-
 task.spawn(function()
     while task.wait(2) do
         if state.autoHatch then clickUIButtons("hatch") end
@@ -130,7 +176,7 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- VISUALS & MOVEMENT
+-- VISUALS
 -- ============================================================
 local espCache = {}
 local function clearESP()
@@ -154,72 +200,34 @@ local function applyESP()
     end
 end
 
-RunService.Heartbeat:Connect(function()
-    if state.speedEnabled then
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then hum.WalkSpeed = state.speedValue end
-    end
-end)
-
-UserInputService.JumpRequest:Connect(function()
-    if state.infiniteJump then
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
-    end
-end)
-
 -- ============================================================
--- GUI CONSTRUCTION
+-- GUI
 -- ============================================================
 local MainTab = Window:CreateTab("Farm", nil)
 local VisualTab = Window:CreateTab("Visual", nil)
-local MiscTab = Window:CreateTab("Misc", nil)
 
--- FARM TAB
-MainTab:CreateSection("Server-Bypass Actions")
+MainTab:CreateSection("Glide Bypass")
 MainTab:CreateToggle({
-    Name = "Auto Steal (Prompt Hook)",
+    Name = "Auto Steal (Glide)",
     CurrentValue = false,
     Flag = "AutoSteal",
     Callback = function(v) state.autoSteal = v end,
 })
 
-MainTab:CreateButton({
-    Name = "Manual Steal Best",
-    Callback = function()
-        local target = getBestEgg()
-        if target then
-            local part = target:IsA("Model") and target.PrimaryPart or target
-            if part then
-                local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    hrp.CFrame = part.CFrame + Vector3.new(0, 3, 0)
-                    task.wait(0.1)
-                    fireEggPrompts(target)
-                end
-            end
-        end
-    end,
-})
-
-MainTab:CreateSection("Base Automation (UI Hook)")
 MainTab:CreateToggle({
-    Name = "Auto Hatch",
+    Name = "Auto Hatch (UI Click)",
     CurrentValue = false,
     Flag = "AutoHatch",
     Callback = function(v) state.autoHatch = v end,
 })
 
 MainTab:CreateToggle({
-    Name = "Auto Place",
+    Name = "Auto Place (UI Click)",
     CurrentValue = false,
     Flag = "AutoPlace",
     Callback = function(v) state.autoPlace = v end,
 })
 
--- VISUAL TAB
 VisualTab:CreateSection("ESP")
 VisualTab:CreateToggle({
     Name = "Egg ESP",
@@ -236,40 +244,8 @@ VisualTab:CreateButton({
     Callback = function() applyESP() end,
 })
 
--- MISC TAB
-MiscTab:CreateSection("Movement (Server Validated)")
-MiscTab:CreateToggle({
-    Name = "Speed Enabled",
-    CurrentValue = false,
-    Flag = "SpeedEnabled",
-    Callback = function(v)
-        state.speedEnabled = v
-        if not v then
-            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-            if hum then hum.WalkSpeed = 16 end
-        end
-    end,
-})
-
-MiscTab:CreateSlider({
-    Name = "WalkSpeed",
-    Range = {16, 100},
-    Increment = 1,
-    CurrentValue = 16,
-    Suffix = "speed",
-    Flag = "SpeedValue",
-    Callback = function(v) state.speedValue = v end,
-})
-
-MiscTab:CreateToggle({
-    Name = "Infinite Jump",
-    CurrentValue = false,
-    Flag = "InfJump",
-    Callback = function(v) state.infiniteJump = v end,
-})
-
 Rayfield:Notify({
     Title = "master venom online",
-    Content = "prompt bypass active",
+    Content = "glide bypass active",
     Duration = 5,
 })
