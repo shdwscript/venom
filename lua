@@ -1,4 +1,4 @@
--- master venom: bloxstrike — apex edition
+-- master venom: bloxstrike — apex elite edition
 -- runtime: Real executor
 
 local success, Rayfield = pcall(function()
@@ -7,12 +7,12 @@ end)
 if not success or not Rayfield then return end
 
 local Window = Rayfield:CreateWindow({
-    Name = "master venom | apex",
+    Name = "master venom | apex elite",
     LoadingTitle = "master venom",
-    LoadingSubtitle = "injecting apex modules...",
+    LoadingSubtitle = "loading apex elite modules...",
     Theme = "Dark",
-    AccentColor = Color3.fromRGB(255, 255, 255),
-    ConfigurationSaving = {Enabled = true, FolderName = "VenomBlox", FileName = "Apex"},
+    AccentColor = Color3.fromRGB(255, 50, 50), -- Venom Red Accent
+    ConfigurationSaving = {Enabled = true, FolderName = "VenomBlox", FileName = "ApexElite"},
     Discord = {Enabled = false},
     KeySystem = false,
 })
@@ -28,6 +28,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local state = {
     aimbot = false,
+    silentAim = false,
     aimRadarGhosts = true,
     aimbotPart = "Head",
     aimbotFOV = 300,
@@ -35,7 +36,7 @@ local state = {
     requireHold = true,
     showFOV = true,
     triggerbot = false,
-    triggerbotDelay = 0.05,
+    triggerbotDelay = 0.1,
     espEnabled = false,
     espFilter = "Enemies Only",
     espBox = true,
@@ -44,6 +45,8 @@ local state = {
     espDistance = true,
     espSkeleton = false,
     espTracer = false,
+    chamsEnabled = false,
+    chamsColor = Color3.fromRGB(255, 50, 50),
     hitboxExpander = false,
     hitboxSize = 5,
     crosshair = true,
@@ -158,10 +161,69 @@ local function updateCache()
 end
 
 task.spawn(function() while task.wait(0.1) do pcall(updateCache) end end)
-task.spawn(function() while task.wait(1) do pcall(calibrateRadar) end end)
+task.spawn(function() while task.wait(2) do pcall(calibrateRadar) end end)
 
 -- ============================================================
--- AIMBOT & HOOKS
+-- CHAMS & HITBOX EXPANDER (BACKGROUND LOOPS)
+-- ============================================================
+local chamsCache = {}
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if state.chamsEnabled then
+            local activeChams = {}
+            for _, data in ipairs(cachedCharacters) do
+                if not data.IsTeammate and not data.IsCulled then
+                    activeChams[data.Model] = true
+                    if not chamsCache[data.Model] then
+                        local hl = Instance.new("Highlight")
+                        hl.FillColor = state.chamsColor
+                        hl.OutlineColor = Color3.new(0, 0, 0)
+                        hl.FillTransparency = 0.5
+                        hl.OutlineTransparency = 0
+                        hl.Parent = data.Model
+                        chamsCache[data.Model] = hl
+                    end
+                end
+            end
+            
+            for model, hl in pairs(chamsCache) do
+                if not activeChams[model] or not model.Parent then
+                    hl:Destroy()
+                    chamsCache[model] = nil
+                end
+            end
+        else
+            for model, hl in pairs(chamsCache) do
+                hl:Destroy()
+            end
+            chamsCache = {}
+        end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(1) do
+        if state.hitboxExpander then
+            for _, data in ipairs(cachedCharacters) do
+                if not data.IsTeammate and not data.IsCulled then
+                    local head = data.Model:FindFirstChild("Head")
+                    if head then
+                        pcall(function()
+                            head.Size = Vector3.new(state.hitboxSize, state.hitboxSize, state.hitboxSize)
+                            head.Transparency = 0.5
+                            head.CanCollide = false
+                            head.Material = Enum.Material.ForceField
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- ============================================================
+-- AIMBOT, SILENT AIM & HOOKS
 -- ============================================================
 local function getAimPart(charModel)
     if state.aimbotPart == "Head" then return charModel:FindFirstChild("Head")
@@ -190,6 +252,7 @@ local function getClosestToMouse(maxFOV)
     return closestChar, closestPos
 end
 
+-- Camera Hook
 local oldIndex
 oldIndex = hookmetamethod(game, "__newindex", function(self, key, value)
     if self == Workspace.CurrentCamera and key == "CFrame" then
@@ -206,11 +269,40 @@ oldIndex = hookmetamethod(game, "__newindex", function(self, key, value)
     return oldIndex(self, key, value)
 end)
 
+-- Silent Aim Raycast Hook
+pcall(function()
+    local oldRaycast = Raycast
+    local oldFindPartOnRay = Workspace.FindPartOnRay
+    local mt = getrawmetatable(game)
+    local oldNamecall = mt.__namecall
+    setreadonly(mt, false)
+    
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        if state.silentAim and (method == "FindPartOnRay" or method == "Raycast") then
+            local target, targetPos = getClosestToMouse(state.aimbotFOV)
+            if target and targetPos then
+                local args = {...}
+                if method == "FindPartOnRay" then
+                    args[1] = Ray.new(Workspace.CurrentCamera.CFrame.Position, (targetPos - Workspace.CurrentCamera.CFrame.Position).Unit * 1000)
+                elseif method == "Raycast" then
+                    if typeof(args[1]) == "Ray" then
+                        args[1] = Ray.new(Workspace.CurrentCamera.CFrame.Position, (targetPos - Workspace.CurrentCamera.CFrame.Position).Unit * 1000)
+                    end
+                end
+                return oldNamecall(self, unpack(args))
+            end
+        end
+        return oldNamecall(self, ...)
+    end)
+    setreadonly(mt, true)
+end)
+
 -- ============================================================
 -- DRAWING ENGINE
 -- ============================================================
 local watermark = Drawing.new("Text")
-watermark.Text = "master venom | bloxstrike apex"
+watermark.Text = "master venom | apex elite"
 watermark.Color = Color3.new(1, 1, 1)
 watermark.Outline = true
 watermark.Size = 16
@@ -224,174 +316,148 @@ local espCache = {}
 
 local function clearESP()
     for _, drawingTable in pairs(espCache) do
-        for _, d in pairs(drawingTable) do if d and d.Remove then d:Remove() end end
+        for _, d in pairs(drawingTable) do 
+            if typeof(d) == "Instance" and d.Remove then d:Remove() end 
+        end
+        if drawingTable.skel then
+            for _, line in ipairs(drawingTable.skel) do line:Remove() end
+        end
     end
     espCache = {}
 end
 
 RunService.RenderStepped:Connect(function()
-    pcall(function()
-        local cam = Workspace.CurrentCamera
-        if not cam then return end
-        
-        -- Crosshair
-        local mPos = UserInputService:GetMouseLocation()
-        if state.crosshair then
-            crosshairLine1.From = mPos - Vector2.new(7, 0); crosshairLine1.To = mPos + Vector2.new(7, 0)
-            crosshairLine2.From = mPos - Vector2.new(0, 7); crosshairLine2.To = mPos + Vector2.new(0, 7)
-            crosshairLine1.Color = Color3.new(1, 1, 1); crosshairLine2.Color = Color3.new(1, 1, 1)
-            crosshairLine1.Thickness = 1; crosshairLine2.Thickness = 1
-            crosshairLine1.Visible = true; crosshairLine2.Visible = true
-        else
-            crosshairLine1.Visible = false; crosshairLine2.Visible = false
-        end
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    
+    local mPos = UserInputService:GetMouseLocation()
+    
+    -- Crosshair
+    if state.crosshair then
+        crosshairLine1.From = mPos - Vector2.new(7, 0); crosshairLine1.To = mPos + Vector2.new(7, 0)
+        crosshairLine2.From = mPos - Vector2.new(0, 7); crosshairLine2.To = mPos + Vector2.new(0, 7)
+        crosshairLine1.Color = Color3.new(1, 1, 1); crosshairLine2.Color = Color3.new(1, 1, 1)
+        crosshairLine1.Thickness = 1; crosshairLine2.Thickness = 1
+        crosshairLine1.Visible = true; crosshairLine2.Visible = true
+    else
+        crosshairLine1.Visible = false; crosshairLine2.Visible = false
+    end
 
-        -- FOV
-        if state.showFOV and state.aimbot then
-            fovCircle.Position = mPos; fovCircle.Radius = state.aimbotFOV; fovCircle.Visible = true
-        else
-            fovCircle.Visible = false
-        end
+    -- FOV
+    if state.showFOV and state.aimbot then
+        fovCircle.Position = mPos; fovCircle.Radius = state.aimbotFOV; fovCircle.Visible = true
+    else
+        fovCircle.Visible = false
+    end
 
-        -- Hitbox Expander
+    -- ESP
+    if state.espEnabled then
+        local seenPlayers = {}
+        local screenSize = cam.ViewportSize
+
         for _, data in ipairs(cachedCharacters) do
-            if not data.IsTeammate and not data.IsCulled then
-                local head = data.Model:FindFirstChild("Head")
-                if head then
-                    if state.hitboxExpander then
-                        if pcall(function() return head.Size end) then
-                            head.Size = Vector3.new(state.hitboxSize, state.hitboxSize, state.hitboxSize)
-                            head.Transparency = 0.5
-                            head.CanCollide = false
-                            head.Material = Enum.Material.ForceField
-                        end
-                    else
-                        if pcall(function() return head.Size end) then
-                            head.Size = Vector3.new(2, 1, 1)
-                            head.Transparency = 0
-                            head.CanCollide = true
-                            head.Material = Enum.Material.SmoothPlastic
-                        end
-                    end
-                end
-            end
-        end
-
-        -- ESP
-        if state.espEnabled then
-            local seenPlayers = {}
-            local screenSize = cam.ViewportSize
-
-            for _, data in ipairs(cachedCharacters) do
-                local show = (state.espFilter == "Both") or (state.espFilter == "Enemies Only" and not data.IsTeammate) or (state.espFilter == "Teammates Only" and data.IsTeammate) or (state.espFilter == data.Team)
-                
-                if show then
-                    seenPlayers[data.Player] = true
-                    if not espCache[data.Player] then
-                        espCache[data.Player] = {
-                            name = Drawing.new("Text"), box = Drawing.new("Square"), health = Drawing.new("Line"),
-                            headDot = Drawing.new("Circle"), tracer = Drawing.new("Line"), distance = Drawing.new("Text"),
-                            skel = { Drawing.new("Line"), Drawing.new("Line"), Drawing.new("Line"), Drawing.new("Line"), Drawing.new("Line") }
-                        }
-                        local c = espCache[data.Player]
-                        c.name.Size = 14; c.name.Center = true; c.name.Outline = true
-                        c.box.Thickness = 1; c.box.Filled = false
-                        c.health.Thickness = 2
-                        c.headDot.Radius = 3; c.headDot.Filled = true
-                        c.tracer.Thickness = 1
-                        c.distance.Size = 12; c.distance.Center = true; c.distance.Outline = true
-                        for _, line in ipairs(c.skel) do line.Thickness = 1 end
-                    end
-
+            local show = (state.espFilter == "Both") or (state.espFilter == "Enemies Only" and not data.IsTeammate) or (state.espFilter == "Teammates Only" and data.IsTeammate) or (state.espFilter == data.Team)
+            
+            if show then
+                seenPlayers[data.Player] = true
+                if not espCache[data.Player] then
+                    espCache[data.Player] = {
+                        name = Drawing.new("Text"), box = Drawing.new("Square"), health = Drawing.new("Line"),
+                        headDot = Drawing.new("Circle"), tracer = Drawing.new("Line"), distance = Drawing.new("Text"),
+                        skel = { Drawing.new("Line"), Drawing.new("Line"), Drawing.new("Line"), Drawing.new("Line"), Drawing.new("Line") }
+                    }
                     local c = espCache[data.Player]
-                    local targetPos = data.IsCulled and (data.PredictedPos + Vector3.new(0, 1.5, 0)) or data.Head.Position
-                    local rootPos = data.IsCulled and data.PredictedPos or data.Root.Position
-                    local isGhost = data.IsCulled
+                    c.name.Size = 14; c.name.Center = true; c.name.Outline = true
+                    c.box.Thickness = 1; c.box.Filled = false
+                    c.health.Thickness = 2
+                    c.headDot.Radius = 3; c.headDot.Filled = true
+                    c.tracer.Thickness = 1
+                    c.distance.Size = 12; c.distance.Center = true; c.distance.Outline = true
+                    for _, line in ipairs(c.skel) do line.Thickness = 1 end
+                end
 
-                    local screenHead, onHead = cam:WorldToViewportPoint(targetPos)
-                    local screenRoot, onRoot = cam:WorldToViewportPoint(rootPos)
+                local c = espCache[data.Player]
+                local targetPos = data.IsCulled and (data.PredictedPos + Vector3.new(0, 1.5, 0)) or data.Head.Position
+                local rootPos = data.IsCulled and data.PredictedPos or data.Root.Position
+                local isGhost = data.IsCulled
 
-                    if onHead and onRoot then
-                        local height = math.abs(screenHead.Y - screenRoot.Y)
-                        local width = height * 0.5
-                        local color = data.IsTeammate and Color3.new(0.5, 0.5, 0.5) or (isGhost and Color3.fromRGB(255, 100, 100) or Color3.new(1, 1, 1))
+                local screenHead, onHead = cam:WorldToViewportPoint(targetPos)
+                local screenRoot, onRoot = cam:WorldToViewportPoint(rootPos)
 
-                        -- Name
-                        c.name.Position = Vector2.new(screenHead.X, screenHead.Y - 20)
-                        c.name.Text = data.Player.Name .. (isGhost and " (Radar)" or "")
-                        c.name.Color = color
-                        c.name.Visible = state.espName
+                if onHead and onRoot then
+                    local height = math.abs(screenHead.Y - screenRoot.Y)
+                    local width = height * 0.5
+                    local color = data.IsTeammate and Color3.new(0.5, 0.5, 0.5) or (isGhost and Color3.fromRGB(255, 100, 100) or Color3.new(1, 1, 1))
 
-                        -- Box
-                        c.box.Position = Vector2.new(screenHead.X - width / 2, screenHead.Y)
-                        c.box.Size = Vector2.new(width, height)
-                        c.box.Color = color
-                        c.box.Visible = state.espBox
+                    c.name.Position = Vector2.new(screenHead.X, screenHead.Y - 20)
+                    c.name.Text = data.Player.Name .. (isGhost and " (Radar)" or "")
+                    c.name.Color = color
+                    c.name.Visible = state.espName
 
-                        -- Health
-                        if state.espHealth and data.Health then
-                            local hPct = math.clamp(data.Health / data.MaxHealth, 0, 1)
-                            c.health.From = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height)
-                            c.health.To = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height - (height * hPct))
-                            c.health.Color = Color3.fromRGB(255 * (1 - hPct), 255 * hPct, 0)
-                            c.health.Visible = true
-                        else c.health.Visible = false end
+                    c.box.Position = Vector2.new(screenHead.X - width / 2, screenHead.Y)
+                    c.box.Size = Vector2.new(width, height)
+                    c.box.Color = color
+                    c.box.Visible = state.espBox
 
-                        -- Distance
-                        if state.espDistance then
-                            local dist = (rootPos - cam.CFrame.Position).Magnitude
-                            c.distance.Position = Vector2.new(screenHead.X, screenHead.Y + height + 5)
-                            c.distance.Text = string.format("%d studs", math.floor(dist))
-                            c.distance.Color = color
-                            c.distance.Visible = true
-                        else c.distance.Visible = false end
+                    if state.espHealth and data.Health then
+                        local hPct = math.clamp(data.Health / data.MaxHealth, 0, 1)
+                        c.health.From = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height)
+                        c.health.To = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height - (height * hPct))
+                        c.health.Color = Color3.fromRGB(255 * (1 - hPct), 255 * hPct, 0)
+                        c.health.Visible = true
+                    else c.health.Visible = false end
 
-                        -- Skeleton
-                        if state.espSkeleton then
-                            local limbs = { "UpperTorso", "LowerTorso", "LeftUpperArm", "RightUpperArm", "LeftUpperLeg", "RightUpperLeg" }
-                            local pts = {}
-                            for _, limbName in ipairs(limbs) do
-                                local limb = data.Model:FindFirstChild(limbName)
-                                if limb then table.insert(pts, (cam:WorldToViewportPoint(limb.Position))) end
-                            end
-                            for i, line in ipairs(c.skel) do
-                                if pts[i] and pts[i+1] then
-                                    line.From = Vector2.new(pts[i].X, pts[i].Y)
-                                    line.To = Vector2.new(pts[i+1].X, pts[i+1].Y)
-                                    line.Color = color
-                                    line.Visible = true
-                                else line.Visible = false end
-                            end
-                        else
-                            for _, line in ipairs(c.skel) do line.Visible = false end
+                    if state.espDistance then
+                        local dist = (rootPos - cam.CFrame.Position).Magnitude
+                        c.distance.Position = Vector2.new(screenHead.X, screenHead.Y + height + 5)
+                        c.distance.Text = string.format("%d studs", math.floor(dist))
+                        c.distance.Color = color
+                        c.distance.Visible = true
+                    else c.distance.Visible = false end
+
+                    if state.espSkeleton then
+                        local limbs = { "UpperTorso", "LowerTorso", "LeftUpperArm", "RightUpperArm", "LeftUpperLeg", "RightUpperLeg" }
+                        local pts = {}
+                        for _, limbName in ipairs(limbs) do
+                            local limb = data.Model:FindFirstChild(limbName)
+                            if limb then table.insert(pts, (cam:WorldToViewportPoint(limb.Position))) end
                         end
-
-                        -- Tracer
-                        if state.espTracer then
-                            c.tracer.From = Vector2.new(screenSize.X / 2, screenSize.Y)
-                            c.tracer.To = Vector2.new(screenHead.X, screenHead.Y)
-                            c.tracer.Color = color
-                            c.tracer.Visible = true
-                        else c.tracer.Visible = false end
-
-                        c.headDot.Position = Vector2.new(screenHead.X, screenHead.Y)
-                        c.headDot.Color = color
-                        c.headDot.Visible = true
+                        for i, line in ipairs(c.skel) do
+                            if pts[i] and pts[i+1] then
+                                line.From = Vector2.new(pts[i].X, pts[i].Y)
+                                line.To = Vector2.new(pts[i+1].X, pts[i+1].Y)
+                                line.Color = color
+                                line.Visible = true
+                            else line.Visible = false end
+                        end
                     else
-                        for _, d in pairs(c) do if typeof(d) == "Instance" then d.Visible = false end end
                         for _, line in ipairs(c.skel) do line.Visible = false end
                     end
-                end
-            end
 
-            for plr, drawings in pairs(espCache) do
-                if not seenPlayers[plr] or not plr.Parent then
-                    for _, d in pairs(drawings) do if typeof(d) == "Instance" then d.Visible = false end end
-                    for _, line in ipairs(drawings.skel) do line.Visible = false end
+                    if state.espTracer then
+                        c.tracer.From = Vector2.new(screenSize.X / 2, screenSize.Y)
+                        c.tracer.To = Vector2.new(screenHead.X, screenHead.Y)
+                        c.tracer.Color = color
+                        c.tracer.Visible = true
+                    else c.tracer.Visible = false end
+
+                    c.headDot.Position = Vector2.new(screenHead.X, screenHead.Y)
+                    c.headDot.Color = color
+                    c.headDot.Visible = true
+                else
+                    for _, d in pairs(c) do if typeof(d) == "Instance" then d.Visible = false end end
+                    for _, line in ipairs(c.skel) do line.Visible = false end
                 end
             end
         end
-    end)
+
+        for plr, drawings in pairs(espCache) do
+            if not seenPlayers[plr] or not plr.Parent then
+                for _, d in pairs(drawings) do if typeof(d) == "Instance" then d.Visible = false end end
+                for _, line in ipairs(drawings.skel) do line.Visible = false end
+            end
+        end
+    end
 end)
 
 -- ============================================================
@@ -401,12 +467,14 @@ RunService.Heartbeat:Connect(function()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum then
-        hum.WalkSpeed = state.speedEnabled and state.speedValue or 16
+        if state.speedEnabled then hum.WalkSpeed = state.speedValue
+        elseif hum.WalkSpeed ~= 16 then hum.WalkSpeed = 16 end
+
         if state.jumpEnabled then
             hum.UseJumpPower = true
-            hum.JumpPower = 150
+            if hum.JumpPower ~= 150 then hum.JumpPower = 150 end
         else
-            hum.JumpPower = 50
+            if hum.JumpPower ~= 50 then hum.JumpPower = 50 end
         end
     end
 end)
@@ -434,18 +502,20 @@ end)
 local CombatTab = Window:CreateTab("Combat", nil)
 local VisualsTab = Window:CreateTab("Visuals", nil)
 local MovementTab = Window:CreateTab("Movement", nil)
+local SettingsTab = Window:CreateTab("Settings", nil)
 
 CombatTab:CreateSection("Aim Assistance")
 CombatTab:CreateToggle({ Name = "Camera Aimbot", CurrentValue = false, Flag = "Aimbot", Callback = function(v) state.aimbot = v end })
+CombatTab:CreateKeybind({ Name = "Aimbot Keybind", CurrentKeybind = "MouseButton2", HoldMode = true, Flag = "AimKey", Callback = function(v) state.requireHold = v end })
+CombatTab:CreateToggle({ Name = "Silent Aim (Raycast)", CurrentValue = false, Flag = "SilentAim", Callback = function(v) state.silentAim = v end })
 CombatTab:CreateToggle({ Name = "Aim Radar Ghosts (Wallbang)", CurrentValue = true, Flag = "AimGhosts", Callback = function(v) state.aimRadarGhosts = v end })
-CombatTab:CreateToggle({ Name = "Hold Right-Click (Legit)", CurrentValue = true, Flag = "HoldRMB", Callback = function(v) state.requireHold = v end })
 CombatTab:CreateDropdown({ Name = "Aim Part", Options = {"Head", "Torso", "Root"}, CurrentOption = {"Head"}, MultipleOptions = false, Flag = "AimPart", Callback = function(opt) state.aimbotPart = opt[1] end })
 CombatTab:CreateSlider({ Name = "Aimbot FOV", Range = {10, 800}, Increment = 1, CurrentValue = 300, Suffix = "px", Flag = "FOV", Callback = function(v) state.aimbotFOV = v end })
 CombatTab:CreateSlider({ Name = "Aimbot Smoothness", Range = {0, 1}, Increment = 0.01, CurrentValue = 0.15, Suffix = "lerp", Flag = "Smooth", Callback = function(v) state.aimbotSmooth = v end })
 
 CombatTab:CreateSection("Assist")
 CombatTab:CreateToggle({ Name = "Triggerbot", CurrentValue = false, Flag = "Triggerbot", Callback = function(v) state.triggerbot = v end })
-CombatTab:CreateSlider({ Name = "Trigger Delay", Range = {0, 1}, Increment = 0.01, CurrentValue = 0.05, Suffix = "s", Flag = "TriggerDelay", Callback = function(v) state.triggerbotDelay = v end })
+CombatTab:CreateSlider({ Name = "Trigger Delay", Range = {0, 1}, Increment = 0.01, CurrentValue = 0.1, Suffix = "s", Flag = "TriggerDelay", Callback = function(v) state.triggerbotDelay = v end })
 CombatTab:CreateToggle({ Name = "Hitbox Expander", CurrentValue = false, Flag = "Hitbox", Callback = function(v) state.hitboxExpander = v end })
 CombatTab:CreateSlider({ Name = "Hitbox Size", Range = {2, 15}, Increment = 1, CurrentValue = 5, Suffix = "studs", Flag = "HitboxSize", Callback = function(v) state.hitboxSize = v end })
 
@@ -459,7 +529,9 @@ VisualsTab:CreateToggle({ Name = "Distance", CurrentValue = true, Flag = "ESPDis
 VisualsTab:CreateToggle({ Name = "Skeleton", CurrentValue = false, Flag = "ESPSkeleton", Callback = function(v) state.espSkeleton = v end })
 VisualsTab:CreateToggle({ Name = "Tracers", CurrentValue = false, Flag = "ESPTracer", Callback = function(v) state.espTracer = v end })
 
-VisualsTab:CreateSection("UI & Misc")
+VisualsTab:CreateSection("Visuals")
+VisualsTab:CreateToggle({ Name = "Chams (3D Highlight)", CurrentValue = false, Flag = "Chams", Callback = function(v) state.chamsEnabled = v end })
+VisualsTab:CreateColorPicker({ Name = "Chams Color", Color = Color3.fromRGB(255, 50, 50), Flag = "ChamsColor", Callback = function(v) state.chamsColor = v end })
 VisualsTab:CreateToggle({ Name = "Custom Crosshair", CurrentValue = true, Flag = "Crosshair", Callback = function(v) state.crosshair = v end })
 VisualsTab:CreateToggle({ Name = "Show FOV Circle", CurrentValue = true, Flag = "ShowFOV", Callback = function(v) state.showFOV = v end })
 VisualsTab:CreateButton({ Name = "Refresh ESP", Callback = function() clearESP() end })
@@ -469,4 +541,11 @@ MovementTab:CreateToggle({ Name = "Speed Enabled", CurrentValue = false, Flag = 
 MovementTab:CreateSlider({ Name = "Walk Speed", Range = {16, 40}, Increment = 1, CurrentValue = 20, Suffix = "spd", Flag = "SpeedVal", Callback = function(v) state.speedValue = v end })
 MovementTab:CreateToggle({ Name = "Infinite Jump", CurrentValue = false, Flag = "Jump", Callback = function(v) state.jumpEnabled = v end })
 
-Rayfield:Notify({ Title = "master venom online", Content = "apex combat loaded", Duration = 5 })
+SettingsTab:CreateSection("Configuration")
+SettingsTab:CreateButton({ Name = "Destroy UI & Unload", Callback = function()
+    Rayfield:Destroy()
+    clearESP()
+    for _, hl in pairs(chamsCache) do hl:Destroy() end
+end })
+
+Rayfield:Notify({ Title = "master venom online", Content = "apex elite loaded", Duration = 5 })
