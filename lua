@@ -1,4 +1,4 @@
--- master venom: bloxstrike — radar wallhack & ultimate build
+-- master venom: bloxstrike — mathematical wallhack (North-Up Radar)
 -- runtime: Real executor
 
 local success, Rayfield = pcall(function()
@@ -9,7 +9,7 @@ if not success or not Rayfield then return end
 local Window = Rayfield:CreateWindow({
     Name = "master venom | bloxstrike",
     LoadingTitle = "master venom",
-    LoadingSubtitle = "radar hook active...",
+    LoadingSubtitle = "injecting radar math...",
     Theme = "Dark",
     AccentColor = Color3.fromRGB(200, 200, 200),
     ConfigurationSaving = {Enabled = false},
@@ -28,6 +28,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local state = {
     aimbot = false,
+    aimRadarGhosts = true,
     aimbotPart = "Head",
     aimbotFOV = 300,
     aimbotSmooth = 0.15,
@@ -41,11 +42,10 @@ local state = {
     espName = true,
     espHealth = true,
     espTracer = false,
-    radarESP = true, -- NEW: Radar Wallhack
 }
 
 -- ============================================================
--- TARGETING & CACHING (PVS AWARE)
+-- TARGETING & CACHING
 -- ============================================================
 local function getMyTeam()
     local myTeam = LocalPlayer:GetAttribute("Team")
@@ -56,13 +56,51 @@ local function getMyTeam()
     return myTeam
 end
 
+local radarScale = 1.214 -- Default, dynamically calibrated
 local cachedCharacters = {}
+
+local function getRadarDots()
+    local pg = LocalPlayer:FindFirstChild("PlayerGui")
+    local radarRoot = pg and pg:FindFirstChild("MainGui") and pg.MainGui:FindFirstChild("Gameplay") and pg.MainGui.Gameplay:FindFirstChild("Middle") and pg.MainGui.Gameplay.Middle:FindFirstChild("Radar") and pg.MainGui.Gameplay.Middle.Radar:FindFirstChild("Radar")
+    if not radarRoot then return nil, nil end
+    return radarRoot:FindFirstChild("LocalPlayer"), radarRoot
+end
+
+local function calibrateRadar()
+    local localChar = LocalPlayer.Character
+    local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
+    if not localRoot then return end
+    
+    local localDot, radarRoot = getRadarDots()
+    if not localDot or not radarRoot then return end
+    
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+            local eDot = radarRoot:FindFirstChild(plr.Name)
+            if eDot and eDot.Visible then
+                local eRoot = plr.Character.HumanoidRootPart
+                local dist3D = (Vector2.new(eRoot.Position.X, eRoot.Position.Z) - Vector2.new(localRoot.Position.X, localRoot.Position.Z)).Magnitude
+                local dx = eDot.AbsolutePosition.X - localDot.AbsolutePosition.X
+                local dy = eDot.AbsolutePosition.Y - localDot.AbsolutePosition.Y
+                local distPixels = math.sqrt(dx*dx + dy*dy)
+                
+                if distPixels > 10 then
+                    radarScale = dist3D / distPixels
+                    break
+                end
+            end
+        end
+    end
+end
+
 local function updateCache()
     local list = {}
     local myTeam = getMyTeam()
     local seenNames = {}
     local charFolder = Workspace:FindFirstChild("Characters")
     local pvsFolder = ReplicatedStorage:FindFirstChild("_PVS_CulledCharacters")
+    local localDot, radarRoot = getRadarDots()
+    local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 
     local function processChar(plr, char, isCulled)
         if not char or seenNames[char.Name] then return end
@@ -74,12 +112,30 @@ local function updateCache()
             if head and root then
                 seenNames[char.Name] = true
                 local theirTeam = plr:GetAttribute("Team")
+                
+                -- Radar Prediction Math (North-Up)
+                local predictedPos = root.Position
+                if isCulled and localRoot and localDot and radarRoot then
+                    local eDot = radarRoot:FindFirstChild(plr.Name)
+                    if eDot and eDot.Visible then
+                        local dx = eDot.AbsolutePosition.X - localDot.AbsolutePosition.X
+                        local dy = eDot.AbsolutePosition.Y - localDot.AbsolutePosition.Y
+                        -- Apply scale directly to World X and Z
+                        predictedPos = Vector3.new(
+                            localRoot.Position.X + (dx * radarScale),
+                            localRoot.Position.Y,
+                            localRoot.Position.Z + (dy * radarScale)
+                        )
+                    end
+                end
+
                 table.insert(list, {
                     Player = plr, Model = char, Head = head, Root = root,
                     Health = health, MaxHealth = plr:GetAttribute("MaxHealth") or 100,
                     Team = theirTeam or "Unknown",
                     IsTeammate = (myTeam ~= nil and myTeam == theirTeam),
-                    IsCulled = isCulled
+                    IsCulled = isCulled,
+                    PredictedPos = predictedPos
                 })
             end
         end
@@ -106,6 +162,13 @@ task.spawn(function()
     while task.wait(0.1) do pcall(updateCache) end
 end)
 
+task.spawn(function()
+    while task.wait(1) do pcall(calibrateRadar) end
+end)
+
+-- ============================================================
+-- AIMBOT & HOOKS
+-- ============================================================
 local function getAimPart(charModel)
     if state.aimbotPart == "Head" then return charModel:FindFirstChild("Head")
     elseif state.aimbotPart == "Torso" then return charModel:FindFirstChild("UpperTorso") or charModel:FindFirstChild("Torso") end
@@ -113,25 +176,34 @@ local function getAimPart(charModel)
 end
 
 local function getClosestToMouse(maxFOV)
-    local closestChar, closestDist = nil, math.huge
+    local closestChar, closestPos, closestDist = nil, nil, math.huge
     local mousePos = UserInputService:GetMouseLocation()
     local cam = Workspace.CurrentCamera
+
     for _, data in ipairs(cachedCharacters) do
-        if not data.IsTeammate and not data.IsCulled then
-            local part = getAimPart(data.Model)
-            if part then
-                local screenPos, onScreen = cam:WorldToViewportPoint(part.Position)
+        if not data.IsTeammate then
+            local targetPos = nil
+            if not data.IsCulled then
+                local part = getAimPart(data.Model)
+                if part then targetPos = part.Position end
+            elseif state.aimRadarGhosts then
+                targetPos = data.PredictedPos + Vector3.new(0, 1.5, 0) -- Adjust head height
+            end
+
+            if targetPos then
+                local screenPos, onScreen = cam:WorldToViewportPoint(targetPos)
                 if onScreen then
                     local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
                     if dist < closestDist and dist < maxFOV then
                         closestDist = dist
                         closestChar = data.Model
+                        closestPos = targetPos
                     end
                 end
             end
         end
     end
-    return closestChar
+    return closestChar, closestPos
 end
 
 local oldIndex
@@ -140,16 +212,13 @@ oldIndex = hookmetamethod(game, "__newindex", function(self, key, value)
         if state.aimbot then
             local holdCheck = not state.requireHold or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
             if holdCheck then
-                local target = getClosestToMouse(state.aimbotFOV)
-                if target then
-                    local part = getAimPart(target)
-                    if part then
-                        local lookAt = CFrame.lookAt(value.Position, part.Position)
-                        if state.aimbotSmooth > 0 then
-                            value = value:Lerp(lookAt, state.aimbotSmooth)
-                        else
-                            value = lookAt
-                        end
+                local target, targetPos = getClosestToMouse(state.aimbotFOV)
+                if target and targetPos then
+                    local lookAt = CFrame.lookAt(value.Position, targetPos)
+                    if state.aimbotSmooth > 0 then
+                        value = value:Lerp(lookAt, state.aimbotSmooth)
+                    else
+                        value = lookAt
                     end
                 end
             end
@@ -159,7 +228,7 @@ oldIndex = hookmetamethod(game, "__newindex", function(self, key, value)
 end)
 
 -- ============================================================
--- DRAWING CACHE & RENDER LOOP
+-- DRAWING & RENDER LOOP
 -- ============================================================
 local watermark = Drawing.new("Text")
 watermark.Text = "master venom | bloxstrike"
@@ -177,8 +246,6 @@ fovCircle.Transparency = 0.7
 fovCircle.Visible = false
 
 local espCache = {}
-local radarCache = {}
-
 local function clearESP()
     for _, drawingTable in pairs(espCache) do
         for _, d in pairs(drawingTable) do
@@ -186,10 +253,6 @@ local function clearESP()
         end
     end
     espCache = {}
-    for _, d in pairs(radarCache) do
-        if d and d.Remove then d:Remove() end
-    end
-    radarCache = {}
 end
 
 RunService.RenderStepped:Connect(function()
@@ -205,7 +268,6 @@ RunService.RenderStepped:Connect(function()
             fovCircle.Visible = false
         end
 
-        -- 1. Standard 3D ESP
         if state.espEnabled then
             local seenPlayers = {}
             local screenSize = cam.ViewportSize
@@ -237,17 +299,25 @@ RunService.RenderStepped:Connect(function()
                     end
 
                     local c = espCache[data.Player]
-                    local screenHead, onHead = cam:WorldToViewportPoint(data.Head.Position)
-                    local screenRoot, onRoot = cam:WorldToViewportPoint(data.Root.Position)
+                    -- Use predicted position if culled
+                    local targetPos = data.IsCulled and (data.PredictedPos + Vector3.new(0, 1.5, 0)) or data.Head.Position
+                    local rootPos = data.IsCulled and data.PredictedPos or data.Root.Position
+                    local isGhost = data.IsCulled
 
-                    if onHead and onRoot and not data.IsCulled then
+                    local screenHead, onHead = cam:WorldToViewportPoint(targetPos)
+                    local screenRoot, onRoot = cam:WorldToViewportPoint(rootPos)
+
+                    if onHead and onRoot then
                         local height = math.abs(screenHead.Y - screenRoot.Y)
                         local width = height * 0.5
-                        local color = data.IsTeammate and Color3.new(0.5, 0.5, 0.5) or Color3.new(1, 1, 1)
+                        
+                        local color = Color3.new(1, 1, 1)
+                        if data.IsTeammate then color = Color3.new(0.5, 0.5, 0.5) 
+                        elseif isGhost then color = Color3.fromRGB(255, 100, 100) end
 
                         if state.espName then
                             c.name.Position = Vector2.new(screenHead.X, screenHead.Y - 20)
-                            c.name.Text = data.Player.Name
+                            c.name.Text = data.Player.Name .. (isGhost and " (Radar)" or "")
                             c.name.Color = color
                             c.name.Visible = true
                         else c.name.Visible = false end
@@ -290,48 +360,6 @@ RunService.RenderStepped:Connect(function()
                 end
             end
         end
-
-        -- 2. Radar ESP (2D Wallhack for Culled Players)
-        local pg = LocalPlayer:FindFirstChild("PlayerGui")
-        local radarRoot = pg and pg:FindFirstChild("MainGui") and pg.MainGui:FindFirstChild("Gameplay") and pg.MainGui.Gameplay:FindFirstChild("Middle") and pg.MainGui.Gameplay.Middle:FindFirstChild("Radar") and pg.MainGui.Gameplay.Middle.Radar:FindFirstChild("Radar")
-        
-        if state.radarESP and radarRoot then
-            local centerPos = Vector2.new(Workspace.CurrentCamera.ViewportSize.X / 2, Workspace.CurrentCamera.ViewportSize.Y / 2)
-            local seenRadar = {}
-
-            for _, ui in ipairs(radarRoot:GetChildren()) do
-                if ui:IsA("ImageLabel") and ui.Name ~= "LocalPlayer" and ui.Name ~= "Map" and ui.Name ~= "Direction" and ui.Name ~= "Bomb" then
-                    local plr = Players:FindFirstChild(ui.Name)
-                    if plr and plr.Team ~= LocalPlayer.Team then
-                        seenRadar[plr] = true
-                        if not radarCache[plr] then
-                            radarCache[plr] = Drawing.new("Line")
-                            radarCache[plr].Thickness = 2
-                            radarCache[plr].Color = Color3.new(1, 0, 0) -- Red for radar wallhack
-                        end
-                        
-                        -- Radar coordinates (Scale)
-                        local rx = ui.Position.X.Scale
-                        local ry = ui.Position.Y.Scale
-                        
-                        -- Convert to Screen offset (Centered around player)
-                        local offset = Vector2.new((rx - 0.5) * 2, (ry - 0.5) * 2)
-                        local screenTarget = centerPos + (offset * 500) -- Scale factor for 2D projection
-
-                        local d = radarCache[plr]
-                        d.From = centerPos
-                        d.To = screenTarget
-                        d.Visible = true
-                    end
-                end
-            end
-            
-            for plr, d in pairs(radarCache) do
-                if not seenRadar[plr] then
-                    d.Visible = false
-                end
-            end
-        end
     end)
 end)
 
@@ -361,6 +389,7 @@ local VisualsTab = Window:CreateTab("Visuals", nil)
 
 CombatTab:CreateSection("Aim Assistance")
 CombatTab:CreateToggle({ Name = "Camera Aimbot", CurrentValue = false, Flag = "Aimbot", Callback = function(v) state.aimbot = v end })
+CombatTab:CreateToggle({ Name = "Aim Radar Ghosts (Wallbang)", CurrentValue = true, Flag = "AimGhosts", Callback = function(v) state.aimRadarGhosts = v end })
 CombatTab:CreateToggle({ Name = "Hold Right-Click (Legit)", CurrentValue = true, Flag = "HoldRMB", Callback = function(v) state.requireHold = v end })
 CombatTab:CreateToggle({ Name = "Show FOV Circle", CurrentValue = true, Flag = "ShowFOV", Callback = function(v) state.showFOV = v end })
 CombatTab:CreateDropdown({ Name = "Aim Part", Options = {"Head", "Torso", "Root"}, CurrentOption = {"Head"}, MultipleOptions = false, Flag = "AimPart", Callback = function(opt) state.aimbotPart = opt[1] end })
@@ -371,7 +400,7 @@ CombatTab:CreateSection("Triggerbot")
 CombatTab:CreateToggle({ Name = "Triggerbot", CurrentValue = false, Flag = "Triggerbot", Callback = function(v) state.triggerbot = v end })
 CombatTab:CreateSlider({ Name = "Trigger Delay", Range = {0, 1}, Increment = 0.01, CurrentValue = 0.05, Suffix = "s", Flag = "TriggerDelay", Callback = function(v) state.triggerbotDelay = v end })
 
-VisualsTab:CreateSection("3D Player ESP")
+VisualsTab:CreateSection("Player ESP")
 VisualsTab:CreateToggle({ Name = "ESP Enabled", CurrentValue = false, Flag = "ESP", Callback = function(v) state.espEnabled = v end })
 VisualsTab:CreateDropdown({ 
     Name = "ESP Filter", 
@@ -386,12 +415,9 @@ VisualsTab:CreateToggle({ Name = "Name", CurrentValue = true, Flag = "ESPName", 
 VisualsTab:CreateToggle({ Name = "Health Bar", CurrentValue = true, Flag = "ESPHealth", Callback = function(v) state.espHealth = v end })
 VisualsTab:CreateToggle({ Name = "Tracers", CurrentValue = false, Flag = "ESPTracer", Callback = function(v) state.espTracer = v end })
 
-VisualsTab:CreateSection("Radar Bypass")
-VisualsTab:CreateToggle({ Name = "Radar Wallhack (Culled)", CurrentValue = true, Flag = "RadarESP", Callback = function(v) state.radarESP = v end })
-
 VisualsTab:CreateButton({
     Name = "Refresh ESP (If glitched)",
     Callback = function() clearESP() end
 })
 
-Rayfield:Notify({ Title = "master venom online", Content = "radar wallhack active", Duration = 5 })
+Rayfield:Notify({ Title = "master venom online", Content = "mathematical radar wallhack active", Duration = 5 })
