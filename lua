@@ -1,4 +1,4 @@
--- master venom: bloxstrike — ultimate UI & visual overhaul
+-- master venom: bloxstrike — radar wallhack & ultimate build
 -- runtime: Real executor
 
 local success, Rayfield = pcall(function()
@@ -9,9 +9,9 @@ if not success or not Rayfield then return end
 local Window = Rayfield:CreateWindow({
     Name = "master venom | bloxstrike",
     LoadingTitle = "master venom",
-    LoadingSubtitle = "overhauling engine...",
-    Theme = "Dark", -- Sleek dark theme
-    AccentColor = Color3.fromRGB(200, 200, 200), -- White/gray to match the VENOM palette
+    LoadingSubtitle = "radar hook active...",
+    Theme = "Dark",
+    AccentColor = Color3.fromRGB(200, 200, 200),
     ConfigurationSaving = {Enabled = false},
     Discord = {Enabled = false},
     KeySystem = false,
@@ -31,21 +31,21 @@ local state = {
     aimbotPart = "Head",
     aimbotFOV = 300,
     aimbotSmooth = 0.15,
-    requireHold = true, -- Hold right click to aim
+    requireHold = true,
     showFOV = true,
     triggerbot = false,
     triggerbotDelay = 0.05,
     espEnabled = false,
     espFilter = "Enemies Only",
-    showCulled = false, -- Defaults to off to reduce clutter
     espBox = true,
     espName = true,
     espHealth = true,
     espTracer = false,
+    radarESP = true, -- NEW: Radar Wallhack
 }
 
 -- ============================================================
--- TARGETING & CACHING
+-- TARGETING & CACHING (PVS AWARE)
 -- ============================================================
 local function getMyTeam()
     local myTeam = LocalPlayer:GetAttribute("Team")
@@ -61,7 +61,6 @@ local function updateCache()
     local list = {}
     local myTeam = getMyTeam()
     local seenNames = {}
-    
     local charFolder = Workspace:FindFirstChild("Characters")
     local pvsFolder = ReplicatedStorage:FindFirstChild("_PVS_CulledCharacters")
 
@@ -69,21 +68,15 @@ local function updateCache()
         if not char or seenNames[char.Name] then return end
         local health = plr:GetAttribute("Health")
         local dead = plr:GetAttribute("Dead")
-        
         if not (dead == true or (health and health <= 0)) then
             local head = char:FindFirstChild("Head")
             local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-            
             if head and root then
                 seenNames[char.Name] = true
                 local theirTeam = plr:GetAttribute("Team")
                 table.insert(list, {
-                    Player = plr,
-                    Model = char,
-                    Head = head,
-                    Root = root,
-                    Health = health,
-                    MaxHealth = plr:GetAttribute("MaxHealth") or 100,
+                    Player = plr, Model = char, Head = head, Root = root,
+                    Health = health, MaxHealth = plr:GetAttribute("MaxHealth") or 100,
                     Team = theirTeam or "Unknown",
                     IsTeammate = (myTeam ~= nil and myTeam == theirTeam),
                     IsCulled = isCulled
@@ -100,8 +93,7 @@ local function updateCache()
                 local wChar = charFolder:FindFirstChild(plr.Name, true)
                 if wChar then processChar(plr, wChar, false) end
             end
-
-            if state.showCulled and pvsFolder then
+            if pvsFolder then
                 local pvsChar = pvsFolder:FindFirstChild(plr.Name, true)
                 if pvsChar then processChar(plr, pvsChar, true) end
             end
@@ -124,7 +116,6 @@ local function getClosestToMouse(maxFOV)
     local closestChar, closestDist = nil, math.huge
     local mousePos = UserInputService:GetMouseLocation()
     local cam = Workspace.CurrentCamera
-
     for _, data in ipairs(cachedCharacters) do
         if not data.IsTeammate and not data.IsCulled then
             local part = getAimPart(data.Model)
@@ -143,9 +134,6 @@ local function getClosestToMouse(maxFOV)
     return closestChar
 end
 
--- ============================================================
--- HOOK METAMETHOD (CAMERA LOCK)
--- ============================================================
 local oldIndex
 oldIndex = hookmetamethod(game, "__newindex", function(self, key, value)
     if self == Workspace.CurrentCamera and key == "CFrame" then
@@ -171,7 +159,7 @@ oldIndex = hookmetamethod(game, "__newindex", function(self, key, value)
 end)
 
 -- ============================================================
--- WATERMARK & DRAWING CACHE
+-- DRAWING CACHE & RENDER LOOP
 -- ============================================================
 local watermark = Drawing.new("Text")
 watermark.Text = "master venom | bloxstrike"
@@ -189,6 +177,8 @@ fovCircle.Transparency = 0.7
 fovCircle.Visible = false
 
 local espCache = {}
+local radarCache = {}
+
 local function clearESP()
     for _, drawingTable in pairs(espCache) do
         for _, d in pairs(drawingTable) do
@@ -196,17 +186,17 @@ local function clearESP()
         end
     end
     espCache = {}
+    for _, d in pairs(radarCache) do
+        if d and d.Remove then d:Remove() end
+    end
+    radarCache = {}
 end
 
--- ============================================================
--- RENDER LOOP
--- ============================================================
 RunService.RenderStepped:Connect(function()
     pcall(function()
         local cam = Workspace.CurrentCamera
         if not cam then return end
 
-        -- FOV
         if state.showFOV and state.aimbot then
             fovCircle.Position = UserInputService:GetMouseLocation()
             fovCircle.Radius = state.aimbotFOV
@@ -215,100 +205,130 @@ RunService.RenderStepped:Connect(function()
             fovCircle.Visible = false
         end
 
-        -- ESP
-        if not state.espEnabled then
-            if next(espCache) then clearESP() end
-            return
-        end
+        -- 1. Standard 3D ESP
+        if state.espEnabled then
+            local seenPlayers = {}
+            local screenSize = cam.ViewportSize
 
-        local seenPlayers = {}
-        local screenSize = cam.ViewportSize
+            for _, data in ipairs(cachedCharacters) do
+                local show = false
+                if state.espFilter == "Both" then show = true
+                elseif state.espFilter == "Enemies Only" and not data.IsTeammate then show = true
+                elseif state.espFilter == "Teammates Only" and data.IsTeammate then show = true
+                elseif state.espFilter == "Terrorists" and data.Team == "Terrorists" then show = true
+                elseif state.espFilter == "Counter-Terrorists" and data.Team == "Counter-Terrorists" then show = true end
 
-        for _, data in ipairs(cachedCharacters) do
-            local show = false
-            if state.espFilter == "Both" then show = true
-            elseif state.espFilter == "Enemies Only" and not data.IsTeammate then show = true
-            elseif state.espFilter == "Teammates Only" and data.IsTeammate then show = true
-            elseif state.espFilter == "Terrorists" and data.Team == "Terrorists" then show = true
-            elseif state.espFilter == "Counter-Terrorists" and data.Team == "Counter-Terrorists" then show = true end
+                if show then
+                    seenPlayers[data.Player] = true
+                    if not espCache[data.Player] then
+                        espCache[data.Player] = {
+                            name = Drawing.new("Text"),
+                            box = Drawing.new("Square"),
+                            health = Drawing.new("Line"),
+                            headDot = Drawing.new("Circle"),
+                            tracer = Drawing.new("Line")
+                        }
+                        local c = espCache[data.Player]
+                        c.name.Size = 14; c.name.Center = true; c.name.Outline = true
+                        c.box.Thickness = 1; c.box.Filled = false
+                        c.health.Thickness = 2
+                        c.headDot.Radius = 3; c.headDot.Filled = true
+                        c.tracer.Thickness = 1
+                    end
 
-            if show then
-                seenPlayers[data.Player] = true
-                if not espCache[data.Player] then
-                    espCache[data.Player] = {
-                        name = Drawing.new("Text"),
-                        box = Drawing.new("Square"),
-                        health = Drawing.new("Line"),
-                        headDot = Drawing.new("Circle"),
-                        tracer = Drawing.new("Line")
-                    }
                     local c = espCache[data.Player]
-                    c.name.Size = 14; c.name.Center = true; c.name.Outline = true
-                    c.box.Thickness = 1; c.box.Filled = false
-                    c.health.Thickness = 2
-                    c.headDot.Radius = 3; c.headDot.Filled = true
-                    c.tracer.Thickness = 1
+                    local screenHead, onHead = cam:WorldToViewportPoint(data.Head.Position)
+                    local screenRoot, onRoot = cam:WorldToViewportPoint(data.Root.Position)
+
+                    if onHead and onRoot and not data.IsCulled then
+                        local height = math.abs(screenHead.Y - screenRoot.Y)
+                        local width = height * 0.5
+                        local color = data.IsTeammate and Color3.new(0.5, 0.5, 0.5) or Color3.new(1, 1, 1)
+
+                        if state.espName then
+                            c.name.Position = Vector2.new(screenHead.X, screenHead.Y - 20)
+                            c.name.Text = data.Player.Name
+                            c.name.Color = color
+                            c.name.Visible = true
+                        else c.name.Visible = false end
+
+                        if state.espBox then
+                            c.box.Position = Vector2.new(screenHead.X - width / 2, screenHead.Y)
+                            c.box.Size = Vector2.new(width, height)
+                            c.box.Color = color
+                            c.box.Visible = true
+                        else c.box.Visible = false end
+
+                        if state.espHealth and data.Health then
+                            local hPct = math.clamp(data.Health / data.MaxHealth, 0, 1)
+                            local barH = height * hPct
+                            c.health.From = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height)
+                            c.health.To = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height - barH)
+                            c.health.Color = Color3.fromRGB(255 * (1 - hPct), 255 * hPct, 0)
+                            c.health.Visible = true
+                        else c.health.Visible = false end
+
+                        c.headDot.Position = Vector2.new(screenHead.X, screenHead.Y)
+                        c.headDot.Color = color
+                        c.headDot.Visible = true
+
+                        if state.espTracer then
+                            c.tracer.From = Vector2.new(screenSize.X / 2, screenSize.Y)
+                            c.tracer.To = Vector2.new(screenHead.X, screenHead.Y)
+                            c.tracer.Color = color
+                            c.tracer.Visible = true
+                        else c.tracer.Visible = false end
+                    else
+                        for _, d in pairs(c) do d.Visible = false end
+                    end
                 end
+            end
 
-                local c = espCache[data.Player]
-                local screenHead, onHead = cam:WorldToViewportPoint(data.Head.Position)
-                local screenRoot, onRoot = cam:WorldToViewportPoint(data.Root.Position)
-
-                if onHead and onRoot then
-                    local height = math.abs(screenHead.Y - screenRoot.Y)
-                    local width = height * 0.5
-                    local color = data.IsTeammate and Color3.new(0.5, 0.5, 0.5) or (data.IsCulled and Color3.new(0.3, 0.3, 0.3) or Color3.new(1, 1, 1))
-
-                    -- Name
-                    if state.espName then
-                        c.name.Position = Vector2.new(screenHead.X, screenHead.Y - 20)
-                        c.name.Text = data.Player.Name
-                        c.name.Color = color
-                        c.name.Visible = true
-                    else c.name.Visible = false end
-
-                    -- Box
-                    if state.espBox then
-                        c.box.Position = Vector2.new(screenHead.X - width / 2, screenHead.Y)
-                        c.box.Size = Vector2.new(width, height)
-                        c.box.Color = color
-                        c.box.Visible = true
-                    else c.box.Visible = false end
-
-                    -- Health Bar
-                    if state.espHealth and data.Health then
-                        local hPct = math.clamp(data.Health / data.MaxHealth, 0, 1)
-                        local barH = height * hPct
-                        c.health.From = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height)
-                        c.health.To = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height - barH)
-                        c.health.Color = Color3.fromRGB(255 * (1 - hPct), 255 * hPct, 0)
-                        c.health.Visible = true
-                    else c.health.Visible = false end
-
-                    -- Head Dot
-                    c.headDot.Position = Vector2.new(screenHead.X, screenHead.Y)
-                    c.headDot.Color = color
-                    c.headDot.Visible = true
-
-                    -- Tracer
-                    if state.espTracer then
-                        c.tracer.From = Vector2.new(screenSize.X / 2, screenSize.Y)
-                        c.tracer.To = Vector2.new(screenHead.X, screenHead.Y)
-                        c.tracer.Color = color
-                        c.tracer.Visible = true
-                    else c.tracer.Visible = false end
-                else
-                    for _, d in pairs(c) do d.Visible = false end
+            for plr, drawings in pairs(espCache) do
+                if not seenPlayers[plr] or not plr.Parent then
+                    for _, d in pairs(drawings) do d.Visible = false end
                 end
             end
         end
 
-        for plr, drawings in pairs(espCache) do
-            if not seenPlayers[plr] or not plr.Parent then
-                for _, d in pairs(drawings) do d.Visible = false end
-                if not plr.Parent then
-                    for _, d in pairs(drawings) do if d.Remove then d:Remove() end end
-                    espCache[plr] = nil
+        -- 2. Radar ESP (2D Wallhack for Culled Players)
+        local pg = LocalPlayer:FindFirstChild("PlayerGui")
+        local radarRoot = pg and pg:FindFirstChild("MainGui") and pg.MainGui:FindFirstChild("Gameplay") and pg.MainGui.Gameplay:FindFirstChild("Middle") and pg.MainGui.Gameplay.Middle:FindFirstChild("Radar") and pg.MainGui.Gameplay.Middle.Radar:FindFirstChild("Radar")
+        
+        if state.radarESP and radarRoot then
+            local centerPos = Vector2.new(Workspace.CurrentCamera.ViewportSize.X / 2, Workspace.CurrentCamera.ViewportSize.Y / 2)
+            local seenRadar = {}
+
+            for _, ui in ipairs(radarRoot:GetChildren()) do
+                if ui:IsA("ImageLabel") and ui.Name ~= "LocalPlayer" and ui.Name ~= "Map" and ui.Name ~= "Direction" and ui.Name ~= "Bomb" then
+                    local plr = Players:FindFirstChild(ui.Name)
+                    if plr and plr.Team ~= LocalPlayer.Team then
+                        seenRadar[plr] = true
+                        if not radarCache[plr] then
+                            radarCache[plr] = Drawing.new("Line")
+                            radarCache[plr].Thickness = 2
+                            radarCache[plr].Color = Color3.new(1, 0, 0) -- Red for radar wallhack
+                        end
+                        
+                        -- Radar coordinates (Scale)
+                        local rx = ui.Position.X.Scale
+                        local ry = ui.Position.Y.Scale
+                        
+                        -- Convert to Screen offset (Centered around player)
+                        local offset = Vector2.new((rx - 0.5) * 2, (ry - 0.5) * 2)
+                        local screenTarget = centerPos + (offset * 500) -- Scale factor for 2D projection
+
+                        local d = radarCache[plr]
+                        d.From = centerPos
+                        d.To = screenTarget
+                        d.Visible = true
+                    end
+                end
+            end
+            
+            for plr, d in pairs(radarCache) do
+                if not seenRadar[plr] then
+                    d.Visible = false
                 end
             end
         end
@@ -351,7 +371,7 @@ CombatTab:CreateSection("Triggerbot")
 CombatTab:CreateToggle({ Name = "Triggerbot", CurrentValue = false, Flag = "Triggerbot", Callback = function(v) state.triggerbot = v end })
 CombatTab:CreateSlider({ Name = "Trigger Delay", Range = {0, 1}, Increment = 0.01, CurrentValue = 0.05, Suffix = "s", Flag = "TriggerDelay", Callback = function(v) state.triggerbotDelay = v end })
 
-VisualsTab:CreateSection("Player ESP")
+VisualsTab:CreateSection("3D Player ESP")
 VisualsTab:CreateToggle({ Name = "ESP Enabled", CurrentValue = false, Flag = "ESP", Callback = function(v) state.espEnabled = v end })
 VisualsTab:CreateDropdown({ 
     Name = "ESP Filter", 
@@ -361,17 +381,17 @@ VisualsTab:CreateDropdown({
     Flag = "ESPFilter", 
     Callback = function(opt) state.espFilter = opt[1] end 
 })
-
-VisualsTab:CreateSection("ESP Elements")
 VisualsTab:CreateToggle({ Name = "Box", CurrentValue = true, Flag = "ESPBox", Callback = function(v) state.espBox = v end })
 VisualsTab:CreateToggle({ Name = "Name", CurrentValue = true, Flag = "ESPName", Callback = function(v) state.espName = v end })
 VisualsTab:CreateToggle({ Name = "Health Bar", CurrentValue = true, Flag = "ESPHealth", Callback = function(v) state.espHealth = v end })
 VisualsTab:CreateToggle({ Name = "Tracers", CurrentValue = false, Flag = "ESPTracer", Callback = function(v) state.espTracer = v end })
-VisualsTab:CreateToggle({ Name = "Show Ghosts (Last Seen)", CurrentValue = false, Flag = "ShowCulled", Callback = function(v) state.showCulled = v end })
+
+VisualsTab:CreateSection("Radar Bypass")
+VisualsTab:CreateToggle({ Name = "Radar Wallhack (Culled)", CurrentValue = true, Flag = "RadarESP", Callback = function(v) state.radarESP = v end })
 
 VisualsTab:CreateButton({
     Name = "Refresh ESP (If glitched)",
     Callback = function() clearESP() end
 })
 
-Rayfield:Notify({ Title = "master venom online", Content = "ultimate UI overhaul active", Duration = 5 })
+Rayfield:Notify({ Title = "master venom online", Content = "radar wallhack active", Duration = 5 })
