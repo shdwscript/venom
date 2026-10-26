@@ -1,406 +1,331 @@
--- master venom: bloxstrike — apex flawless edition
--- runtime: Real executor
-
-local success, Rayfield = pcall(function()
-    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-end)
-if not success or not Rayfield then return end
-
-local Window = Rayfield:CreateWindow({
-    Name = "master venom | apex",
-    LoadingTitle = "master venom",
-    LoadingSubtitle = "loading flawless modules...",
-    Theme = "Dark",
-    AccentColor = Color3.fromRGB(255, 255, 255),
-    ConfigurationSaving = {Enabled = false},
-    Discord = {Enabled = false},
-    KeySystem = false,
-})
-
-task.wait(0.5)
+-- master venom: racket rivals — Raw Custom UI Build
+-- runtime: Real executor (No external libraries required)
+-- game: Racket Rivals
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
 local state = {
-    aimbot = false,
-    silentAim = false,
-    aimRadarGhosts = true,
-    aimbotPart = "Head",
-    aimbotFOV = 300,
-    aimbotSmooth = 0.15,
-    requireHold = true,
-    showFOV = true,
-    triggerbot = false,
-    triggerbotDelay = 0.1,
-    espEnabled = false,
-    espFilter = "Enemies Only",
-    espBox = true,
-    espName = true,
-    espHealth = true,
-    espDistance = true,
-    espTracer = false,
-    crosshair = true,
+    autoSwing = false,
+    autoAim = false,
+    magnet = false,
+    speedEnabled = false,
+    speedValue = 30,
+    jumpEnabled = false,
+    jumpValue = 100,
 }
 
 -- ============================================================
--- CACHING & RADAR MATH
+-- GAME LOGIC
 -- ============================================================
-local function getMyTeam()
-    local myTeam = LocalPlayer:GetAttribute("Team")
-    if not myTeam and LocalPlayer.Character and LocalPlayer.Character.Parent then
-        local pName = LocalPlayer.Character.Parent.Name
-        if pName == "Terrorists" or pName == "Counter-Terrorists" then myTeam = pName end
+local function getBallShadow()
+    local fx = Workspace:FindFirstChild("FX")
+    if fx then
+        local shadow = fx:FindFirstChild("BallShadow")
+        if shadow then return shadow end
     end
-    return myTeam
+    return nil
 end
 
-local radarScale = 1.214
-local cachedCharacters = {}
-
-local function getRadarDots()
-    local pg = LocalPlayer:FindFirstChild("PlayerGui")
-    local radarRoot = pg and pg:FindFirstChild("MainGui") and pg.MainGui:FindFirstChild("Gameplay") and pg.MainGui.Gameplay:FindFirstChild("Middle") and pg.MainGui.Gameplay.Middle:FindFirstChild("Radar") and pg.MainGui.Gameplay.Middle.Radar:FindFirstChild("Radar")
-    if not radarRoot then return nil, nil end
-    return radarRoot:FindFirstChild("LocalPlayer"), radarRoot
+local function getBall()
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then
+            local n = string.lower(obj.Name)
+            if (string.find(n, "ball") or string.find(n, "shuttle")) and not string.find(n, "shadow") then
+                return obj
+            end
+        end
+    end
+    return nil
 end
 
-local function calibrateRadar()
-    local localChar = LocalPlayer.Character
-    local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
-    if not localRoot then return end
-    local localDot, radarRoot = getRadarDots()
-    if not localDot or not radarRoot then return end
-    
-    -- Use ANY player (teammate or enemy) to calibrate
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-            local eDot = radarRoot:FindFirstChild(plr.Name)
-            if eDot and eDot.Visible then
-                local eRoot = plr.Character.HumanoidRootPart
-                local dist3D = (Vector2.new(eRoot.Position.X, eRoot.Position.Z) - Vector2.new(localRoot.Position.X, localRoot.Position.Z)).Magnitude
-                local dx = eDot.AbsolutePosition.X - localDot.AbsolutePosition.X
-                local dy = eDot.AbsolutePosition.Y - localDot.AbsolutePosition.Y
-                local distPixels = math.sqrt(dx*dx + dy*dy)
-                if distPixels > 10 then
-                    radarScale = dist3D / distPixels
-                    break
+-- Auto Swing
+task.spawn(function()
+    while task.wait(0.1) do
+        if state.autoSwing then
+            local ball = getBall()
+            local shadow = getBallShadow()
+            local char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            
+            if root and (shadow or ball) then
+                local targetPos = shadow and shadow.Position or ball.Position
+                if (root.Position - targetPos).Magnitude < 25 then
+                    pcall(function()
+                        keypress(0x46) -- F key
+                        task.wait(0.05)
+                        keyrelease(0x46)
+                        mouse1click()
+                    end)
                 end
             end
         end
     end
-end
+end)
 
-local function updateCache()
-    local list = {}
-    local myTeam = getMyTeam()
-    local seenNames = {}
-    local charFolder = Workspace:FindFirstChild("Characters")
-    local pvsFolder = ReplicatedStorage:FindFirstChild("_PVS_CulledCharacters")
-    local localDot, radarRoot = getRadarDots()
-    local localRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local camRot = Workspace.CurrentCamera.CFrame
-
-    local function processChar(plr, char, isCulled)
-        if not char or seenNames[char.Name] then return end
-        local health = plr:GetAttribute("Health")
-        local dead = plr:GetAttribute("Dead")
-        if not (dead == true or (health and health <= 0)) then
-            local head = char:FindFirstChild("Head")
-            local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-            if head and root then
-                seenNames[char.Name] = true
-                local theirTeam = plr:GetAttribute("Team")
-                
-                local predictedPos = root.Position
-                if isCulled and localRoot and localDot and radarRoot then
-                    local eDot = radarRoot:FindFirstChild(plr.Name)
-                    if eDot and eDot.Visible then
-                        local dx = eDot.AbsolutePosition.X - localDot.AbsolutePosition.X
-                        local dy = eDot.AbsolutePosition.Y - localDot.AbsolutePosition.Y
-                        
-                        local rightOffset = dx * radarScale
-                        local forwardOffset = -dy * radarScale
-                        
-                        predictedPos = localRoot.Position + (camRot.RightVector * rightOffset) + (camRot.LookVector * forwardOffset)
-                    end
-                end
-
-                table.insert(list, {
-                    Player = plr, Model = char, Head = head, Root = root,
-                    Health = health, MaxHealth = plr:GetAttribute("MaxHealth") or 100,
-                    Team = theirTeam or "Unknown",
-                    IsTeammate = (myTeam ~= nil and myTeam == theirTeam),
-                    IsCulled = isCulled, PredictedPos = predictedPos
-                })
-            end
+-- Ball Magnet
+RunService.Heartbeat:Connect(function()
+    if state.magnet then
+        local shadow = getBallShadow()
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if shadow and hum and root then
+            hum:MoveTo(shadow.Position)
         end
     end
+end)
 
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            if plr.Character and plr.Character:IsDescendantOf(Workspace) then
-                processChar(plr, plr.Character, false)
-            elseif charFolder then
-                local wChar = charFolder:FindFirstChild(plr.Name, true)
-                if wChar then processChar(plr, wChar, false) end
-            end
-            if pvsFolder then
-                local pvsChar = pvsFolder:FindFirstChild(plr.Name, true)
-                if pvsChar then processChar(plr, pvsChar, true) end
-            end
-        end
-    end
-    cachedCharacters = list
-end
-
-task.spawn(function() while task.wait(0.1) do pcall(updateCache) end end)
-task.spawn(function() while task.wait(1) do pcall(calibrateRadar) end end)
-
--- ============================================================
--- AIMBOT & HOOKS
--- ============================================================
-local function getAimPart(charModel)
-    if state.aimbotPart == "Head" then return charModel:FindFirstChild("Head")
-    elseif state.aimbotPart == "Torso" then return charModel:FindFirstChild("UpperTorso") or charModel:FindFirstChild("Torso") end
-    return charModel:FindFirstChild("HumanoidRootPart")
-end
-
-local function getClosestToMouse(maxFOV)
-    local closestChar, closestPos, closestDist = nil, nil, math.huge
-    local mousePos = UserInputService:GetMouseLocation()
-    local cam = Workspace.CurrentCamera
-    for _, data in ipairs(cachedCharacters) do
-        if not data.IsTeammate then
-            local targetPos = not data.IsCulled and getAimPart(data.Model) and getAimPart(data.Model).Position or (state.aimRadarGhosts and data.PredictedPos + Vector3.new(0, 1.5, 0))
-            if targetPos then
-                local screenPos, onScreen = cam:WorldToViewportPoint(targetPos)
-                if onScreen then
-                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                    if dist < closestDist and dist < maxFOV then
-                        closestDist, closestChar, closestPos = dist, data.Model, targetPos
-                    end
-                end
-            end
-        end
-    end
-    return closestChar, closestPos
-end
-
+-- Camera Auto Aim
 local oldIndex
 oldIndex = hookmetamethod(game, "__newindex", function(self, key, value)
     if self == Workspace.CurrentCamera and key == "CFrame" then
-        if state.aimbot then
-            if not state.requireHold or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
-                local target, targetPos = getClosestToMouse(state.aimbotFOV)
-                if target and targetPos then
-                    local lookAt = CFrame.lookAt(value.Position, targetPos)
-                    value = state.aimbotSmooth > 0 and value:Lerp(lookAt, state.aimbotSmooth) or lookAt
-                end
+        if state.autoAim then
+            local ball = getBall()
+            if ball then
+                value = CFrame.lookAt(value.Position, ball.Position)
             end
         end
     end
     return oldIndex(self, key, value)
 end)
 
-pcall(function()
-    local mt = getrawmetatable(game)
-    local oldNamecall = mt.__namecall
-    setreadonly(mt, false)
-    mt.__namecall = newcclosure(function(self, ...)
-        local method = getnamecallmethod()
-        if state.silentAim and (method == "FindPartOnRay" or method == "Raycast") then
-            local target, targetPos = getClosestToMouse(state.aimbotFOV)
-            if target and targetPos then
-                local args = {...}
-                if method == "FindPartOnRay" then
-                    args[1] = Ray.new(Workspace.CurrentCamera.CFrame.Position, (targetPos - Workspace.CurrentCamera.CFrame.Position).Unit * 1000)
-                elseif method == "Raycast" then
-                    if typeof(args[1]) == "Ray" then
-                        args[1] = Ray.new(Workspace.CurrentCamera.CFrame.Position, (targetPos - Workspace.CurrentCamera.CFrame.Position).Unit * 1000)
-                    end
-                end
-                return oldNamecall(self, unpack(args))
-            end
-        end
-        return oldNamecall(self, ...)
-    end)
-    setreadonly(mt, true)
+-- Speed & Jump
+RunService.Heartbeat:Connect(function()
+    local char = LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        if state.speedEnabled then hum.WalkSpeed = state.speedValue
+        elseif hum.WalkSpeed ~= 16 then hum.WalkSpeed = 16 end
+        if state.jumpEnabled then
+            hum.UseJumpPower = true
+            hum.JumpPower = state.jumpValue
+        elseif hum.JumpPower ~= 50 then hum.JumpPower = 50 end
+    end
 end)
 
 -- ============================================================
--- DRAWING ENGINE
+-- CUSTOM UI BUILDER (RAW INSTANCES)
 -- ============================================================
-local watermark = Drawing.new("Text")
-watermark.Text = "master venom | apex"
-watermark.Color = Color3.new(1, 1, 1)
-watermark.Outline = true
-watermark.Size = 16
-watermark.Position = Vector2.new(20, 20)
-watermark.Visible = true
+local CoreGui = game:GetService("CoreGui")
+local Gui = Instance.new("ScreenGui")
+Gui.Name = "MasterVenomUI"
+Gui.ResetOnSpawn = false
+Gui.Parent = CoreGui
 
-local crosshairLine1 = Drawing.new("Line")
-local crosshairLine2 = Drawing.new("Line")
-local fovCircle = Drawing.new("Circle")
-local espCache = {}
+local Main = Instance.new("Frame")
+Main.Size = UDim2.new(0, 500, 0, 350)
+Main.Position = UDim2.new(0.5, -250, 0.5, -175)
+Main.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+Main.BorderSizePixel = 0
+Main.Parent = Gui
 
-local function clearESP()
-    for _, drawingTable in pairs(espCache) do
-        for _, d in pairs(drawingTable) do 
-            if typeof(d) == "Instance" and d.Remove then d:Remove() end 
-        end
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = Main
+
+local Stroke = Instance.new("UIStroke")
+Stroke.Color = Color3.fromRGB(255, 50, 50)
+Stroke.Thickness = 2
+Stroke.Parent = Main
+
+-- Top Bar (Draggable)
+local TopBar = Instance.new("Frame")
+TopBar.Size = UDim2.new(1, 0, 0, 35)
+TopBar.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+TopBar.BorderSizePixel = 0
+TopBar.Parent = Main
+
+local TopCorner = Instance.new("UICorner")
+TopCorner.CornerRadius = UDim.new(0, 8)
+TopCorner.Parent = TopBar
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -20, 1, 0)
+Title.Position = UDim2.new(0, 10, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "master venom | racket rivals"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 14
+Title.Parent = TopBar
+
+-- Drag Logic
+local dragging, dragInput, dragStart, startPos
+TopBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
     end
-    espCache = {}
+end)
+TopBar.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Content Area
+local Content = Instance.new("Frame")
+Content.Size = UDim2.new(1, -20, 1, -45)
+Content.Position = UDim2.new(0, 10, 0, 45)
+Content.BackgroundTransparency = 1
+Content.Parent = Main
+
+-- UI Helper Functions
+local yOffset = 0
+
+local function CreateSection(text)
+    local section = Instance.new("TextLabel")
+    section.Size = UDim2.new(1, 0, 0, 20)
+    section.Position = UDim2.new(0, 0, 0, yOffset)
+    section.BackgroundTransparency = 1
+    section.Text = string.upper(text)
+    section.TextColor3 = Color3.fromRGB(255, 50, 50)
+    section.TextXAlignment = Enum.TextXAlignment.Left
+    section.Font = Enum.Font.GothamBold
+    section.TextSize = 12
+    section.Parent = Content
+    yOffset = yOffset + 25
 end
 
-RunService.RenderStepped:Connect(function()
-    local cam = Workspace.CurrentCamera
-    if not cam then return end
-    
-    local mPos = UserInputService:GetMouseLocation()
-    
-    if state.crosshair then
-        crosshairLine1.From = mPos - Vector2.new(7, 0); crosshairLine1.To = mPos + Vector2.new(7, 0)
-        crosshairLine2.From = mPos - Vector2.new(0, 7); crosshairLine2.To = mPos + Vector2.new(0, 7)
-        crosshairLine1.Color = Color3.new(1, 1, 1); crosshairLine2.Color = Color3.new(1, 1, 1)
-        crosshairLine1.Thickness = 1; crosshairLine2.Thickness = 1
-        crosshairLine1.Visible = true; crosshairLine2.Visible = true
-    else
-        crosshairLine1.Visible = false; crosshairLine2.Visible = false
+local function CreateToggle(name, default, callback)
+    local toggleFrame = Instance.new("Frame")
+    toggleFrame.Size = UDim2.new(1, 0, 0, 30)
+    toggleFrame.Position = UDim2.new(0, 0, 0, yOffset)
+    toggleFrame.BackgroundTransparency = 1
+    toggleFrame.Parent = Content
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -50, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = name
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 13
+    label.Parent = toggleFrame
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 40, 0, 20)
+    btn.Position = UDim2.new(1, -40, 0.5, -10)
+    btn.BackgroundColor3 = default and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(50, 50, 50)
+    btn.BorderSizePixel = 0
+    btn.Text = ""
+    btn.Parent = toggleFrame
+
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 4)
+    btnCorner.Parent = btn
+
+    local indicator = Instance.new("Frame")
+    indicator.Size = UDim2.new(0, 16, 0, 16)
+    indicator.Position = default and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+    indicator.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    indicator.BorderSizePixel = 0
+    indicator.Parent = btn
+
+    local indCorner = Instance.new("UICorner")
+    indCorner.CornerRadius = UDim.new(0, 4)
+    indCorner.Parent = indicator
+
+    local toggled = default
+    btn.MouseButton1Click:Connect(function()
+        toggled = not toggled
+        btn.BackgroundColor3 = toggled and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(50, 50, 50)
+        indicator.Position = toggled and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+        callback(toggled)
+    end)
+
+    yOffset = yOffset + 35
+end
+
+local function CreateSlider(name, min, max, default, callback)
+    local sliderFrame = Instance.new("Frame")
+    sliderFrame.Size = UDim2.new(1, 0, 0, 45)
+    sliderFrame.Position = UDim2.new(0, 0, 0, yOffset)
+    sliderFrame.BackgroundTransparency = 1
+    sliderFrame.Parent = Content
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 0, 20)
+    label.BackgroundTransparency = 1
+    label.Text = name .. ": " .. tostring(default)
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 13
+    label.Parent = sliderFrame
+
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, 0, 0, 6)
+    bar.Position = UDim2.new(0, 0, 0, 25)
+    bar.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    bar.BorderSizePixel = 0
+    bar.Parent = sliderFrame
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    fill.BorderSizePixel = 0
+    fill.Parent = bar
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 1, 0)
+    btn.BackgroundTransparency = 1
+    btn.Text = ""
+    btn.Parent = bar
+
+    local sliding = false
+    local function update(input)
+        local pos = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+        local val = math.floor(min + (max - min) * pos)
+        fill.Size = UDim2.new(pos, 0, 1, 0)
+        label.Text = name .. ": " .. tostring(val)
+        callback(val)
     end
 
-    if state.showFOV and state.aimbot then
-        fovCircle.Position = mPos; fovCircle.Radius = state.aimbotFOV; fovCircle.Visible = true
-    else
-        fovCircle.Visible = false
-    end
-
-    if state.espEnabled then
-        local seenPlayers = {}
-        for _, data in ipairs(cachedCharacters) do
-            local show = (state.espFilter == "Both") or (state.espFilter == "Enemies Only" and not data.IsTeammate) or (state.espFilter == "Teammates Only" and data.IsTeammate)
-            
-            if show then
-                seenPlayers[data.Player] = true
-                if not espCache[data.Player] then
-                    espCache[data.Player] = {
-                        name = Drawing.new("Text"), box = Drawing.new("Square"), health = Drawing.new("Line"),
-                        headDot = Drawing.new("Circle"), distance = Drawing.new("Text")
-                    }
-                    local c = espCache[data.Player]
-                    c.name.Size = 14; c.name.Center = true; c.name.Outline = true
-                    c.box.Thickness = 1; c.box.Filled = false
-                    c.health.Thickness = 2
-                    c.headDot.Radius = 3; c.headDot.Filled = true
-                    c.distance.Size = 12; c.distance.Center = true; c.distance.Outline = true
-                end
-
-                local c = espCache[data.Player]
-                local targetPos = data.IsCulled and (data.PredictedPos + Vector3.new(0, 1.5, 0)) or data.Head.Position
-                local rootPos = data.IsCulled and data.PredictedPos or data.Root.Position
-                local isGhost = data.IsCulled
-
-                local screenHead, onHead = cam:WorldToViewportPoint(targetPos)
-                local screenRoot, onRoot = cam:WorldToViewportPoint(rootPos)
-
-                if onHead and onRoot then
-                    local height = math.abs(screenHead.Y - screenRoot.Y)
-                    local width = height * 0.5
-                    local color = data.IsTeammate and Color3.new(0.5, 0.5, 0.5) or (isGhost and Color3.fromRGB(255, 100, 100) or Color3.new(1, 1, 1))
-
-                    c.name.Position = Vector2.new(screenHead.X, screenHead.Y - 20)
-                    c.name.Text = data.Player.Name .. (isGhost and " (Radar)" or "")
-                    c.name.Color = color
-                    c.name.Visible = state.espName
-
-                    c.box.Position = Vector2.new(screenHead.X - width / 2, screenHead.Y)
-                    c.box.Size = Vector2.new(width, height)
-                    c.box.Color = color
-                    c.box.Visible = state.espBox
-
-                    if state.espHealth and data.Health then
-                        local hPct = math.clamp(data.Health / data.MaxHealth, 0, 1)
-                        c.health.From = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height)
-                        c.health.To = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height - (height * hPct))
-                        c.health.Color = Color3.fromRGB(255 * (1 - hPct), 255 * hPct, 0)
-                        c.health.Visible = true
-                    else c.health.Visible = false end
-
-                    if state.espDistance then
-                        local dist = (rootPos - cam.CFrame.Position).Magnitude
-                        c.distance.Position = Vector2.new(screenHead.X, screenHead.Y + height + 5)
-                        c.distance.Text = string.format("%d studs", math.floor(dist))
-                        c.distance.Color = color
-                        c.distance.Visible = true
-                    else c.distance.Visible = false end
-
-                    c.headDot.Position = Vector2.new(screenHead.X, screenHead.Y)
-                    c.headDot.Color = color
-                    c.headDot.Visible = true
-                else
-                    for _, d in pairs(c) do d.Visible = false end
-                end
-            end
+    btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            sliding = true
+            update(input)
         end
-        for plr, drawings in pairs(espCache) do
-            if not seenPlayers[plr] then
-                for _, d in pairs(drawings) do d.Visible = false end
-            end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if sliding and input.UserInputType == Enum.UserInputType.MouseMovement then
+            update(input)
         end
-    end
-end)
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then sliding = false end
+    end)
+
+    yOffset = yOffset + 55
+end
 
 -- ============================================================
--- MOVEMENT & TRIGGERBOT
+-- BUILD THE MENU
 -- ============================================================
-task.spawn(function()
-    while task.wait(state.triggerbotDelay) do
-        if state.triggerbot then
-            local target = getClosestToMouse(state.aimbotFOV)
-            if target then
-                local part = getAimPart(target)
-                if part and part.Transparency < 1 then
-                    pcall(function() mouse1click() end)
-                end
-            end
-        end
-    end
-end)
+CreateSection("Combat")
+CreateToggle("Auto Swing", false, function(v) state.autoSwing = v end)
+CreateToggle("Camera Auto Aim", false, function(v) state.autoAim = v end)
+CreateToggle("Ball Magnet", false, function(v) state.magnet = v end)
 
--- ============================================================
--- UI CONSTRUCTION
--- ============================================================
-local CombatTab = Window:CreateTab("Combat", nil)
-local VisualsTab = Window:CreateTab("Visuals", nil)
-
-CombatTab:CreateSection("Aim Assistance")
-CombatTab:CreateToggle({ Name = "Camera Aimbot", CurrentValue = false, Flag = "Aimbot", Callback = function(v) state.aimbot = v end })
-CombatTab:CreateToggle({ Name = "Silent Aim (Raycast)", CurrentValue = false, Flag = "SilentAim", Callback = function(v) state.silentAim = v end })
-CombatTab:CreateToggle({ Name = "Aim Radar Ghosts (Wallbang)", CurrentValue = true, Flag = "AimGhosts", Callback = function(v) state.aimRadarGhosts = v end })
-CombatTab:CreateToggle({ Name = "Hold Right-Click (Legit)", CurrentValue = true, Flag = "HoldRMB", Callback = function(v) state.requireHold = v end })
-CombatTab:CreateDropdown({ Name = "Aim Part", Options = {"Head", "Torso", "Root"}, CurrentOption = {"Head"}, MultipleOptions = false, Flag = "AimPart", Callback = function(opt) state.aimbotPart = opt[1] end })
-CombatTab:CreateSlider({ Name = "Aimbot FOV", Range = {10, 800}, Increment = 1, CurrentValue = 300, Suffix = "px", Flag = "FOV", Callback = function(v) state.aimbotFOV = v end })
-CombatTab:CreateSlider({ Name = "Aimbot Smoothness", Range = {0, 1}, Increment = 0.01, CurrentValue = 0.15, Suffix = "lerp", Flag = "Smooth", Callback = function(v) state.aimbotSmooth = v end })
-
-CombatTab:CreateSection("Triggerbot")
-CombatTab:CreateToggle({ Name = "Triggerbot", CurrentValue = false, Flag = "Triggerbot", Callback = function(v) state.triggerbot = v end })
-CombatTab:CreateSlider({ Name = "Trigger Delay", Range = {0, 1}, Increment = 0.01, CurrentValue = 0.1, Suffix = "s", Flag = "TriggerDelay", Callback = function(v) state.triggerbotDelay = v end })
-
-VisualsTab:CreateSection("3D ESP")
-VisualsTab:CreateToggle({ Name = "ESP Enabled", CurrentValue = false, Flag = "ESP", Callback = function(v) state.espEnabled = v end })
-VisualsTab:CreateDropdown({ Name = "ESP Filter", Options = {"Enemies Only", "Teammates Only", "Both"}, CurrentOption = {"Enemies Only"}, MultipleOptions = false, Flag = "ESPFilter", Callback = function(opt) state.espFilter = opt[1] end })
-VisualsTab:CreateToggle({ Name = "Box", CurrentValue = true, Flag = "ESPBox", Callback = function(v) state.espBox = v end })
-VisualsTab:CreateToggle({ Name = "Name", CurrentValue = true, Flag = "ESPName", Callback = function(v) state.espName = v end })
-VisualsTab:CreateToggle({ Name = "Health Bar", CurrentValue = true, Flag = "ESPHealth", Callback = function(v) state.espHealth = v end })
-VisualsTab:CreateToggle({ Name = "Distance", CurrentValue = true, Flag = "ESPDistance", Callback = function(v) state.espDistance = v end })
-
-VisualsTab:CreateSection("Visuals")
-VisualsTab:CreateToggle({ Name = "Custom Crosshair", CurrentValue = true, Flag = "Crosshair", Callback = function(v) state.crosshair = v end })
-VisualsTab:CreateToggle({ Name = "Show FOV Circle", CurrentValue = true, Flag = "ShowFOV", Callback = function(v) state.showFOV = v end })
-VisualsTab:CreateButton({ Name = "Refresh ESP", Callback = function() clearESP() end })
-
-Rayfield:Notify({ Title = "master venom online", Content = "flawless build loaded", Duration = 5 })
+CreateSection("Movement")
+CreateToggle("Speed Enabled", false, function(v) state.speedEnabled = v end)
+CreateSlider("Walk Speed", 16, 100, 30, function(v) state.speedValue = v end)
+CreateToggle("Jump Enabled", false, function(v) state.jumpEnabled = v end)
+CreateSlider("Jump Power", 50, 300, 100, function(v) state.jumpValue = v end)
