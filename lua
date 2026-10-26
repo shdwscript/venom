@@ -1,16 +1,17 @@
--- master venom: steal an egg — ultimate bypass (manual CFrame glide)
--- runtime: Roblox executor
+-- master venom: bloxstrike — ultimate UI & visual overhaul
+-- runtime: Real executor
 
 local success, Rayfield = pcall(function()
     return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 end)
-
 if not success or not Rayfield then return end
 
 local Window = Rayfield:CreateWindow({
-    Name = "master venom: steal an egg",
+    Name = "master venom | bloxstrike",
     LoadingTitle = "master venom",
-    LoadingSubtitle = "initializing bypass...",
+    LoadingSubtitle = "overhauling engine...",
+    Theme = "Dark", -- Sleek dark theme
+    AccentColor = Color3.fromRGB(200, 200, 200), -- White/gray to match the VENOM palette
     ConfigurationSaving = {Enabled = false},
     Discord = {Enabled = false},
     KeySystem = false,
@@ -19,305 +20,358 @@ local Window = Rayfield:CreateWindow({
 task.wait(0.5)
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 
 local state = {
-    autoSteal = false,
-    autoHatch = false,
-    autoPlace = false,
+    aimbot = false,
+    aimbotPart = "Head",
+    aimbotFOV = 300,
+    aimbotSmooth = 0.15,
+    requireHold = true, -- Hold right click to aim
+    showFOV = true,
+    triggerbot = false,
+    triggerbotDelay = 0.05,
     espEnabled = false,
-    speedEnabled = false,
-    speedValue = 16,
+    espFilter = "Enemies Only",
+    showCulled = false, -- Defaults to off to reduce clutter
+    espBox = true,
+    espName = true,
+    espHealth = true,
+    espTracer = false,
 }
 
-local remotes = {}
-
 -- ============================================================
--- REMOTE SCANNER (For Hatch & Place)
+-- TARGETING & CACHING
 -- ============================================================
-local function scanRemotes()
-    remotes = {}
-    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            local n = string.lower(obj.Name)
-            if string.find(n, "hatch") then
-                remotes.hatch = remotes.hatch or obj
-            elseif string.find(n, "place") then
-                remotes.place = remotes.place or obj
-            end
-        end
+local function getMyTeam()
+    local myTeam = LocalPlayer:GetAttribute("Team")
+    if not myTeam and LocalPlayer.Character and LocalPlayer.Character.Parent then
+        local pName = LocalPlayer.Character.Parent.Name
+        if pName == "Terrorists" or pName == "Counter-Terrorists" then myTeam = pName end
     end
+    return myTeam
 end
-scanRemotes()
 
--- ============================================================
--- TARGETING (Deep Scan)
--- ============================================================
-local function getEggs()
+local cachedCharacters = {}
+local function updateCache()
     local list = {}
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if (obj:IsA("Model") or obj:IsA("Part")) and string.find(string.lower(obj.Name), "egg") then
-            table.insert(list, obj)
-        end
-    end
-    return list
-end
-
-local function getClosestEgg()
-    local eggs = getEggs()
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp or #eggs == 0 then return nil end
-
-    local closest = nil
-    local minDist = math.huge
-    for _, egg in ipairs(eggs) do
-        local part = egg:IsA("Model") and egg.PrimaryPart or egg
-        if part then
-            local dist = (part.Position - hrp.Position).Magnitude
-            if dist < minDist then
-                minDist = dist
-                closest = egg
-            end
-        end
-    end
-    return closest
-end
-
-local function fireEggPrompts(egg)
-    if not egg then return end
-    for _, prompt in ipairs(egg:GetDescendants()) do
-        if prompt:IsA("ProximityPrompt") then
-            if fireproximityprompt then
-                pcall(function() fireproximityprompt(prompt) end)
-            else
-                pcall(function()
-                    prompt.HoldDuration = 0
-                    prompt:InputHoldBegin()
-                    task.wait(0.05)
-                    prompt:InputHoldEnd()
-                end)
-            end
-        elseif prompt:IsA("ClickDetector") then
-            if fireclickdetector then
-                pcall(function() fireclickdetector(prompt) end)
-            end
-        end
-    end
-end
-
--- ============================================================
--- MANUAL CFrame GLIDE (Smooth & Bypasses Physics)
--- ============================================================
-local function manualGlide(targetPos)
-    local char = LocalPlayer.Character
-    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-
-    local speed = 120 -- studs per second
-    local originalCanCollide = hrp.CanCollide
-    hrp.CanCollide = false
-
-    local distance = (targetPos - hrp.Position).Magnitude
-    local timeToTravel = distance / speed
-    local elapsed = 0
-
-    local connection
-    connection = RunService.Heartbeat:Connect(function(dt)
-        if not hrp or not hrp.Parent then
-            connection:Disconnect()
-            return
-        end
-        
-        elapsed = elapsed + dt
-        local alpha = math.clamp(elapsed / timeToTravel, 0, 1)
-        
-        -- Smooth interpolation
-        hrp.CFrame = hrp.CFrame:Lerp(CFrame.new(targetPos + Vector3.new(0, 3, 0)), alpha * 0.5)
-        
-        if alpha >= 1 or (hrp.Position - targetPos).Magnitude < 5 then
-            connection:Disconnect()
-            hrp.CanCollide = originalCanCollide
-        end
-    end)
+    local myTeam = getMyTeam()
+    local seenNames = {}
     
-    -- Wait until glide finishes
-    task.wait(timeToTravel + 0.1)
-    if connection then connection:Disconnect() end
-    hrp.CanCollide = originalCanCollide
+    local charFolder = Workspace:FindFirstChild("Characters")
+    local pvsFolder = ReplicatedStorage:FindFirstChild("_PVS_CulledCharacters")
+
+    local function processChar(plr, char, isCulled)
+        if not char or seenNames[char.Name] then return end
+        local health = plr:GetAttribute("Health")
+        local dead = plr:GetAttribute("Dead")
+        
+        if not (dead == true or (health and health <= 0)) then
+            local head = char:FindFirstChild("Head")
+            local root = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+            
+            if head and root then
+                seenNames[char.Name] = true
+                local theirTeam = plr:GetAttribute("Team")
+                table.insert(list, {
+                    Player = plr,
+                    Model = char,
+                    Head = head,
+                    Root = root,
+                    Health = health,
+                    MaxHealth = plr:GetAttribute("MaxHealth") or 100,
+                    Team = theirTeam or "Unknown",
+                    IsTeammate = (myTeam ~= nil and myTeam == theirTeam),
+                    IsCulled = isCulled
+                })
+            end
+        end
+    end
+
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            if plr.Character and plr.Character:IsDescendantOf(Workspace) then
+                processChar(plr, plr.Character, false)
+            elseif charFolder then
+                local wChar = charFolder:FindFirstChild(plr.Name, true)
+                if wChar then processChar(plr, wChar, false) end
+            end
+
+            if state.showCulled and pvsFolder then
+                local pvsChar = pvsFolder:FindFirstChild(plr.Name, true)
+                if pvsChar then processChar(plr, pvsChar, true) end
+            end
+        end
+    end
+    cachedCharacters = list
+end
+
+task.spawn(function()
+    while task.wait(0.1) do pcall(updateCache) end
+end)
+
+local function getAimPart(charModel)
+    if state.aimbotPart == "Head" then return charModel:FindFirstChild("Head")
+    elseif state.aimbotPart == "Torso" then return charModel:FindFirstChild("UpperTorso") or charModel:FindFirstChild("Torso") end
+    return charModel:FindFirstChild("HumanoidRootPart")
+end
+
+local function getClosestToMouse(maxFOV)
+    local closestChar, closestDist = nil, math.huge
+    local mousePos = UserInputService:GetMouseLocation()
+    local cam = Workspace.CurrentCamera
+
+    for _, data in ipairs(cachedCharacters) do
+        if not data.IsTeammate and not data.IsCulled then
+            local part = getAimPart(data.Model)
+            if part then
+                local screenPos, onScreen = cam:WorldToViewportPoint(part.Position)
+                if onScreen then
+                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                    if dist < closestDist and dist < maxFOV then
+                        closestDist = dist
+                        closestChar = data.Model
+                    end
+                end
+            end
+        end
+    end
+    return closestChar
 end
 
 -- ============================================================
--- AUTOMATION LOOPS
+-- HOOK METAMETHOD (CAMERA LOCK)
 -- ============================================================
-task.spawn(function()
-    while task.wait(1.5) do
-        if not state.autoSteal then continue end
-        local char = LocalPlayer.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if not hrp then continue end
-
-        local egg = getClosestEgg()
-        if not egg then continue end
-        local part = egg:IsA("Model") and egg.PrimaryPart or egg
-        if not part then continue end
-
-        local basePos = hrp.Position
-
-        -- 1. Glide to egg
-        manualGlide(part.Position)
-        task.wait(0.2)
-
-        -- 2. Fire Prompt
-        fireEggPrompts(egg)
-        task.wait(0.3)
-
-        -- 3. Glide back to base
-        manualGlide(basePos)
-    end
-end)
-
-task.spawn(function()
-    while task.wait(2) do
-        if state.autoHatch and remotes.hatch then
-            pcall(function() remotes.hatch:FireServer() end)
-        end
-        if state.autoPlace and remotes.place then
-            pcall(function() remotes.place:FireServer() end)
+local oldIndex
+oldIndex = hookmetamethod(game, "__newindex", function(self, key, value)
+    if self == Workspace.CurrentCamera and key == "CFrame" then
+        if state.aimbot then
+            local holdCheck = not state.requireHold or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+            if holdCheck then
+                local target = getClosestToMouse(state.aimbotFOV)
+                if target then
+                    local part = getAimPart(target)
+                    if part then
+                        local lookAt = CFrame.lookAt(value.Position, part.Position)
+                        if state.aimbotSmooth > 0 then
+                            value = value:Lerp(lookAt, state.aimbotSmooth)
+                        else
+                            value = lookAt
+                        end
+                    end
+                end
+            end
         end
     end
+    return oldIndex(self, key, value)
 end)
 
 -- ============================================================
--- ESP (Lag-Free Highlighting)
+-- WATERMARK & DRAWING CACHE
 -- ============================================================
+local watermark = Drawing.new("Text")
+watermark.Text = "master venom | bloxstrike"
+watermark.Color = Color3.new(1, 1, 1)
+watermark.Outline = true
+watermark.Size = 16
+watermark.Position = Vector2.new(20, 20)
+watermark.Visible = true
+
+local fovCircle = Drawing.new("Circle")
+fovCircle.Thickness = 1
+fovCircle.Color = Color3.new(1, 1, 1)
+fovCircle.Filled = false
+fovCircle.Transparency = 0.7
+fovCircle.Visible = false
+
 local espCache = {}
 local function clearESP()
-    for obj, hl in pairs(espCache) do
-        if hl and hl.Parent then hl:Destroy() end
+    for _, drawingTable in pairs(espCache) do
+        for _, d in pairs(drawingTable) do
+            if d and d.Remove then d:Remove() end
+        end
     end
     espCache = {}
 end
 
-local function updateESP()
-    if not state.espEnabled then return end
-    local eggs = getEggs()
-    
-    -- Clean up deleted eggs
-    for egg, hl in pairs(espCache) do
-        if not egg.Parent or not egg:IsDescendantOf(Workspace) then
-            hl:Destroy()
-            espCache[egg] = nil
-        end
-    end
+-- ============================================================
+-- RENDER LOOP
+-- ============================================================
+RunService.RenderStepped:Connect(function()
+    pcall(function()
+        local cam = Workspace.CurrentCamera
+        if not cam then return end
 
-    -- Add missing eggs
-    for _, egg in ipairs(eggs) do
-        if not espCache[egg] and (egg:IsA("Model") or egg:IsA("Part")) then
-            local hl = Instance.new("Highlight")
-            hl.FillColor = Color3.fromRGB(255, 255, 255)
-            hl.OutlineColor = Color3.fromRGB(0, 0, 0)
-            hl.Parent = egg
-            espCache[egg] = hl
+        -- FOV
+        if state.showFOV and state.aimbot then
+            fovCircle.Position = UserInputService:GetMouseLocation()
+            fovCircle.Radius = state.aimbotFOV
+            fovCircle.Visible = true
+        else
+            fovCircle.Visible = false
         end
-    end
-end
 
+        -- ESP
+        if not state.espEnabled then
+            if next(espCache) then clearESP() end
+            return
+        end
+
+        local seenPlayers = {}
+        local screenSize = cam.ViewportSize
+
+        for _, data in ipairs(cachedCharacters) do
+            local show = false
+            if state.espFilter == "Both" then show = true
+            elseif state.espFilter == "Enemies Only" and not data.IsTeammate then show = true
+            elseif state.espFilter == "Teammates Only" and data.IsTeammate then show = true
+            elseif state.espFilter == "Terrorists" and data.Team == "Terrorists" then show = true
+            elseif state.espFilter == "Counter-Terrorists" and data.Team == "Counter-Terrorists" then show = true end
+
+            if show then
+                seenPlayers[data.Player] = true
+                if not espCache[data.Player] then
+                    espCache[data.Player] = {
+                        name = Drawing.new("Text"),
+                        box = Drawing.new("Square"),
+                        health = Drawing.new("Line"),
+                        headDot = Drawing.new("Circle"),
+                        tracer = Drawing.new("Line")
+                    }
+                    local c = espCache[data.Player]
+                    c.name.Size = 14; c.name.Center = true; c.name.Outline = true
+                    c.box.Thickness = 1; c.box.Filled = false
+                    c.health.Thickness = 2
+                    c.headDot.Radius = 3; c.headDot.Filled = true
+                    c.tracer.Thickness = 1
+                end
+
+                local c = espCache[data.Player]
+                local screenHead, onHead = cam:WorldToViewportPoint(data.Head.Position)
+                local screenRoot, onRoot = cam:WorldToViewportPoint(data.Root.Position)
+
+                if onHead and onRoot then
+                    local height = math.abs(screenHead.Y - screenRoot.Y)
+                    local width = height * 0.5
+                    local color = data.IsTeammate and Color3.new(0.5, 0.5, 0.5) or (data.IsCulled and Color3.new(0.3, 0.3, 0.3) or Color3.new(1, 1, 1))
+
+                    -- Name
+                    if state.espName then
+                        c.name.Position = Vector2.new(screenHead.X, screenHead.Y - 20)
+                        c.name.Text = data.Player.Name
+                        c.name.Color = color
+                        c.name.Visible = true
+                    else c.name.Visible = false end
+
+                    -- Box
+                    if state.espBox then
+                        c.box.Position = Vector2.new(screenHead.X - width / 2, screenHead.Y)
+                        c.box.Size = Vector2.new(width, height)
+                        c.box.Color = color
+                        c.box.Visible = true
+                    else c.box.Visible = false end
+
+                    -- Health Bar
+                    if state.espHealth and data.Health then
+                        local hPct = math.clamp(data.Health / data.MaxHealth, 0, 1)
+                        local barH = height * hPct
+                        c.health.From = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height)
+                        c.health.To = Vector2.new(screenHead.X - width / 2 - 6, screenHead.Y + height - barH)
+                        c.health.Color = Color3.fromRGB(255 * (1 - hPct), 255 * hPct, 0)
+                        c.health.Visible = true
+                    else c.health.Visible = false end
+
+                    -- Head Dot
+                    c.headDot.Position = Vector2.new(screenHead.X, screenHead.Y)
+                    c.headDot.Color = color
+                    c.headDot.Visible = true
+
+                    -- Tracer
+                    if state.espTracer then
+                        c.tracer.From = Vector2.new(screenSize.X / 2, screenSize.Y)
+                        c.tracer.To = Vector2.new(screenHead.X, screenHead.Y)
+                        c.tracer.Color = color
+                        c.tracer.Visible = true
+                    else c.tracer.Visible = false end
+                else
+                    for _, d in pairs(c) do d.Visible = false end
+                end
+            end
+        end
+
+        for plr, drawings in pairs(espCache) do
+            if not seenPlayers[plr] or not plr.Parent then
+                for _, d in pairs(drawings) do d.Visible = false end
+                if not plr.Parent then
+                    for _, d in pairs(drawings) do if d.Remove then d:Remove() end end
+                    espCache[plr] = nil
+                end
+            end
+        end
+    end)
+end)
+
+-- ============================================================
+-- TRIGGERBOT
+-- ============================================================
 task.spawn(function()
-    while task.wait(1) do
-        if state.espEnabled then updateESP() end
-    end
-end)
-
--- ============================================================
--- SPEED CHANGER
--- ============================================================
-RunService.Heartbeat:Connect(function()
-    if state.speedEnabled then
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then hum.WalkSpeed = state.speedValue end
-    end
-end)
-
--- ============================================================
--- GUI
--- ============================================================
-local MainTab = Window:CreateTab("Farm", nil)
-local VisualTab = Window:CreateTab("Visual", nil)
-local MiscTab = Window:CreateTab("Misc", nil)
-
-MainTab:CreateSection("Glide Bypass")
-MainTab:CreateToggle({
-    Name = "Auto Steal (Glide)",
-    CurrentValue = false,
-    Flag = "AutoSteal",
-    Callback = function(v) state.autoSteal = v end,
-})
-
-MainTab:CreateSection("Remote Automation")
-MainTab:CreateToggle({
-    Name = "Auto Hatch",
-    CurrentValue = false,
-    Flag = "AutoHatch",
-    Callback = function(v) state.autoHatch = v end,
-})
-MainTab:CreateToggle({
-    Name = "Auto Place",
-    CurrentValue = false,
-    Flag = "AutoPlace",
-    Callback = function(v) state.autoPlace = v end,
-})
-
-VisualTab:CreateSection("ESP")
-VisualTab:CreateToggle({
-    Name = "Egg ESP",
-    CurrentValue = false,
-    Flag = "ESP",
-    Callback = function(v)
-        state.espEnabled = v
-        if not v then clearESP() end
-    end,
-})
-
-MiscTab:CreateSection("Movement")
-MiscTab:CreateToggle({
-    Name = "Speed Enabled",
-    CurrentValue = false,
-    Flag = "SpeedEnabled",
-    Callback = function(v)
-        state.speedEnabled = v
-        if not v then
-            local char = LocalPlayer.Character
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            if hum then hum.WalkSpeed = 16 end
+    while true do
+        task.wait(state.triggerbotDelay)
+        if state.triggerbot then
+            local target = getClosestToMouse(state.aimbotFOV)
+            if target then
+                local part = getAimPart(target)
+                if part and part.Transparency < 1 then
+                    pcall(function() mouse1click() end)
+                end
+            end
         end
-    end,
+    end
+end)
+
+-- ============================================================
+-- UI CONSTRUCTION
+-- ============================================================
+local CombatTab = Window:CreateTab("Combat", nil)
+local VisualsTab = Window:CreateTab("Visuals", nil)
+
+CombatTab:CreateSection("Aim Assistance")
+CombatTab:CreateToggle({ Name = "Camera Aimbot", CurrentValue = false, Flag = "Aimbot", Callback = function(v) state.aimbot = v end })
+CombatTab:CreateToggle({ Name = "Hold Right-Click (Legit)", CurrentValue = true, Flag = "HoldRMB", Callback = function(v) state.requireHold = v end })
+CombatTab:CreateToggle({ Name = "Show FOV Circle", CurrentValue = true, Flag = "ShowFOV", Callback = function(v) state.showFOV = v end })
+CombatTab:CreateDropdown({ Name = "Aim Part", Options = {"Head", "Torso", "Root"}, CurrentOption = {"Head"}, MultipleOptions = false, Flag = "AimPart", Callback = function(opt) state.aimbotPart = opt[1] end })
+CombatTab:CreateSlider({ Name = "Aimbot FOV", Range = {10, 800}, Increment = 1, CurrentValue = 300, Suffix = "px", Flag = "FOV", Callback = function(v) state.aimbotFOV = v end })
+CombatTab:CreateSlider({ Name = "Aimbot Smoothness", Range = {0, 1}, Increment = 0.01, CurrentValue = 0.15, Suffix = "lerp", Flag = "Smooth", Callback = function(v) state.aimbotSmooth = v end })
+
+CombatTab:CreateSection("Triggerbot")
+CombatTab:CreateToggle({ Name = "Triggerbot", CurrentValue = false, Flag = "Triggerbot", Callback = function(v) state.triggerbot = v end })
+CombatTab:CreateSlider({ Name = "Trigger Delay", Range = {0, 1}, Increment = 0.01, CurrentValue = 0.05, Suffix = "s", Flag = "TriggerDelay", Callback = function(v) state.triggerbotDelay = v end })
+
+VisualsTab:CreateSection("Player ESP")
+VisualsTab:CreateToggle({ Name = "ESP Enabled", CurrentValue = false, Flag = "ESP", Callback = function(v) state.espEnabled = v end })
+VisualsTab:CreateDropdown({ 
+    Name = "ESP Filter", 
+    Options = {"Enemies Only", "Teammates Only", "Both", "Terrorists", "Counter-Terrorists"}, 
+    CurrentOption = {"Enemies Only"}, 
+    MultipleOptions = false, 
+    Flag = "ESPFilter", 
+    Callback = function(opt) state.espFilter = opt[1] end 
 })
 
-MiscTab:CreateSlider({
-    Name = "WalkSpeed (Max 100)",
-    Range = {16, 100},
-    Increment = 1,
-    CurrentValue = 16,
-    Suffix = "speed",
-    Flag = "SpeedValue",
-    Callback = function(v) state.speedValue = v end,
+VisualsTab:CreateSection("ESP Elements")
+VisualsTab:CreateToggle({ Name = "Box", CurrentValue = true, Flag = "ESPBox", Callback = function(v) state.espBox = v end })
+VisualsTab:CreateToggle({ Name = "Name", CurrentValue = true, Flag = "ESPName", Callback = function(v) state.espName = v end })
+VisualsTab:CreateToggle({ Name = "Health Bar", CurrentValue = true, Flag = "ESPHealth", Callback = function(v) state.espHealth = v end })
+VisualsTab:CreateToggle({ Name = "Tracers", CurrentValue = false, Flag = "ESPTracer", Callback = function(v) state.espTracer = v end })
+VisualsTab:CreateToggle({ Name = "Show Ghosts (Last Seen)", CurrentValue = false, Flag = "ShowCulled", Callback = function(v) state.showCulled = v end })
+
+VisualsTab:CreateButton({
+    Name = "Refresh ESP (If glitched)",
+    Callback = function() clearESP() end
 })
 
-MiscTab:CreateButton({
-    Name = "Refresh Remotes",
-    Callback = function()
-        scanRemotes()
-        Rayfield:Notify({Title = "master venom", Content = "remotes rescanned", Duration = 3})
-    end,
-})
-
-Rayfield:Notify({
-    Title = "master venom online",
-    Content = "manual CFrame glide active",
-    Duration = 5,
-})
+Rayfield:Notify({ Title = "master venom online", Content = "ultimate UI overhaul active", Duration = 5 })
