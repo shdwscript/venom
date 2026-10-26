@@ -1,5 +1,5 @@
--- master venom: racket rivals — Raw Custom UI Build
--- runtime: Real executor (No external libraries required)
+-- master venom: racket rivals — Raw Custom UI (Speed Hook & Key Spam)
+-- runtime: Real executor
 -- game: Racket Rivals
 
 local Players = game:GetService("Players")
@@ -16,6 +16,8 @@ local state = {
     speedValue = 30,
     jumpEnabled = false,
     jumpValue = 100,
+    dashSpam = false,
+    setSpam = false,
 }
 
 -- ============================================================
@@ -66,6 +68,26 @@ task.spawn(function()
     end
 end)
 
+-- Dash (Q) & Set (E) Spam
+task.spawn(function()
+    while task.wait(0.1) do
+        if state.dashSpam then
+            pcall(function()
+                keypress(0x51) -- Q key
+                task.wait(0.05)
+                keyrelease(0x51)
+            end)
+        end
+        if state.setSpam then
+            pcall(function()
+                keypress(0x45) -- E key
+                task.wait(0.05)
+                keyrelease(0x45)
+            end)
+        end
+    end
+end)
+
 -- Ball Magnet
 RunService.Heartbeat:Connect(function()
     if state.magnet then
@@ -80,8 +102,8 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- Camera Auto Aim
-local oldIndex
-oldIndex = hookmetamethod(game, "__newindex", function(self, key, value)
+local oldNameIndex
+oldNameIndex = hookmetamethod(game, "__newindex", function(self, key, value)
     if self == Workspace.CurrentCamera and key == "CFrame" then
         if state.autoAim then
             local ball = getBall()
@@ -90,20 +112,37 @@ oldIndex = hookmetamethod(game, "__newindex", function(self, key, value)
             end
         end
     end
+    return oldNameIndex(self, key, value)
+end)
+
+-- SPEED & JUMP HOOK (Bypasses Game Override)
+local mt = getrawmetatable(game)
+local oldIndex = mt.__newindex
+setreadonly(mt, false)
+
+mt.__newindex = newcclosure(function(self, key, value)
+    if self:IsA("Humanoid") then
+        if key == "WalkSpeed" and state.speedEnabled then
+            return oldIndex(self, key, state.speedValue)
+        elseif key == "JumpPower" and state.jumpEnabled then
+            return oldIndex(self, key, state.jumpValue)
+        end
+    end
     return oldIndex(self, key, value)
 end)
 
--- Speed & Jump
+setreadonly(mt, true)
+
+-- Force Initial Value on Loop
 RunService.Heartbeat:Connect(function()
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if hum then
-        if state.speedEnabled then hum.WalkSpeed = state.speedValue
-        elseif hum.WalkSpeed ~= 16 then hum.WalkSpeed = 16 end
-        if state.jumpEnabled then
-            hum.UseJumpPower = true
+        if state.speedEnabled and hum.WalkSpeed ~= state.speedValue then
+            hum.WalkSpeed = state.speedValue
+        elseif state.jumpEnabled and hum.JumpPower ~= state.jumpValue then
             hum.JumpPower = state.jumpValue
-        elseif hum.JumpPower ~= 50 then hum.JumpPower = 50 end
+        end
     end
 end)
 
@@ -117,8 +156,8 @@ Gui.ResetOnSpawn = false
 Gui.Parent = CoreGui
 
 local Main = Instance.new("Frame")
-Main.Size = UDim2.new(0, 500, 0, 350)
-Main.Position = UDim2.new(0.5, -250, 0.5, -175)
+Main.Size = UDim2.new(0, 500, 0, 450) -- Increased height for new toggles
+Main.Position = UDim2.new(0.5, -250, 0.5, -225)
 Main.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 Main.BorderSizePixel = 0
 Main.Parent = Gui
@@ -324,8 +363,12 @@ CreateToggle("Auto Swing", false, function(v) state.autoSwing = v end)
 CreateToggle("Camera Auto Aim", false, function(v) state.autoAim = v end)
 CreateToggle("Ball Magnet", false, function(v) state.magnet = v end)
 
+CreateSection("Mechanics")
+CreateToggle("Dash Spam (Q)", false, function(v) state.dashSpam = v end)
+CreateToggle("Set Spam (E)", false, function(v) state.setSpam = v end)
+
 CreateSection("Movement")
-CreateToggle("Speed Enabled", false, function(v) state.speedEnabled = v end)
-CreateSlider("Walk Speed", 16, 100, 30, function(v) state.speedValue = v end)
-CreateToggle("Jump Enabled", false, function(v) state.jumpEnabled = v end)
-CreateSlider("Jump Power", 50, 300, 100, function(v) state.jumpValue = v end)
+CreateToggle("Speed Enabled (Force)", false, function(v) state.speedEnabled = v end)
+CreateSlider("Walk Speed", 16, 150, 45, function(v) state.speedValue = v end)
+CreateToggle("Jump Enabled (Force)", false, function(v) state.jumpEnabled = v end)
+CreateSlider("Jump Power", 50, 300, 120, function(v) state.jumpValue = v end)
