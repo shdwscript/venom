@@ -1,4 +1,4 @@
--- master venom: steal an egg — smooth glide bypass
+-- master venom: steal an egg — tween glide & prompt bypass
 -- runtime: Roblox executor (supports fireproximityprompt & getconnections)
 
 local success, Rayfield = pcall(function()
@@ -10,7 +10,7 @@ if not success or not Rayfield then return end
 local Window = Rayfield:CreateWindow({
     Name = "master venom: steal an egg",
     LoadingTitle = "master venom",
-    LoadingSubtitle = "initializing glide bypass...",
+    LoadingSubtitle = "tween glide bypass...",
     ConfigurationSaving = {Enabled = false},
     Discord = {Enabled = false},
     KeySystem = false,
@@ -19,8 +19,7 @@ local Window = Rayfield:CreateWindow({
 task.wait(0.5)
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
@@ -32,7 +31,7 @@ local state = {
 }
 
 -- ============================================================
--- TARGETING & BYPASS LOGIC
+-- TARGETING
 -- ============================================================
 local function getEggs()
     local list = {}
@@ -45,7 +44,6 @@ local function getEggs()
     return list
 end
 
--- Finds the closest egg to prevent long glide times
 local function getClosestEgg()
     local eggs = getEggs()
     local char = LocalPlayer.Character
@@ -90,39 +88,32 @@ local function fireEggPrompts(egg)
 end
 
 -- ============================================================
--- SMOOTH GLIDE MECHANIC
+-- SMOOTH TWEEN GLIDE
 -- ============================================================
-local function glideTo(targetPos)
+local function tweenGlide(targetPos, speed)
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    local attachment = Instance.new("Attachment", hrp)
-    local alignPosition = Instance.new("AlignPosition", hrp)
+    local distance = (targetPos - hrp.Position).Magnitude
+    local time = distance / speed
+
+    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
+    local goal = {CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))}
     
-    alignPosition.Mode = Enum.PositionAlignmentMode.OneAttachment
-    alignPosition.Attachment0 = attachment
-    alignPosition.MaxForce = 50000
-    alignPosition.Responsiveness = 20 -- Adjust for glide smoothness
-    alignPosition.Position = targetPos + Vector3.new(0, 3, 0)
-
-    -- Wait until we are within 6 studs of the target or timeout after 3 seconds
-    local t = 0
-    while t < 3 do
-        if (hrp.Position - (targetPos + Vector3.new(0, 3, 0))).Magnitude < 6 then break end
-        task.wait(0.05)
-        t = t + 0.05
-    end
-
-    alignPosition:Destroy()
-    attachment:Destroy()
+    local tween = TweenService:Create(hrp, tweenInfo, goal)
+    tween:Play()
+    
+    -- Wait for the tween to finish
+    tween.Completed:Wait()
+    task.wait(0.1)
 end
 
 -- ============================================================
 -- AUTOMATION LOOPS
 -- ============================================================
 task.spawn(function()
-    while task.wait(1) do
+    while task.wait(1.5) do
         if not state.autoSteal then continue end
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -135,16 +126,15 @@ task.spawn(function()
 
         local basePos = hrp.Position
 
-        -- 1. Glide to egg
-        glideTo(part.Position)
-        task.wait(0.15) -- let the server register our position
-
-        -- 2. Press E
+        -- 1. Smooth glide to egg (speed 50)
+        tweenGlide(part.Position, 50)
+        
+        -- 2. Fire prompt
         fireEggPrompts(egg)
-        task.wait(0.2)
+        task.wait(0.3)
 
-        -- 3. Glide back to base
-        glideTo(basePos)
+        -- 3. Smooth glide back to base
+        tweenGlide(basePos, 50)
     end
 end)
 
@@ -206,9 +196,9 @@ end
 local MainTab = Window:CreateTab("Farm", nil)
 local VisualTab = Window:CreateTab("Visual", nil)
 
-MainTab:CreateSection("Glide Bypass")
+MainTab:CreateSection("Tween Glide Bypass")
 MainTab:CreateToggle({
-    Name = "Auto Steal (Glide)",
+    Name = "Auto Steal (Tween Glide)",
     CurrentValue = false,
     Flag = "AutoSteal",
     Callback = function(v) state.autoSteal = v end,
@@ -246,6 +236,6 @@ VisualTab:CreateButton({
 
 Rayfield:Notify({
     Title = "master venom online",
-    Content = "glide bypass active",
+    Content = "tween glide bypass active",
     Duration = 5,
 })
